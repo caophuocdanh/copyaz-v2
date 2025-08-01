@@ -88,5 +88,7 @@ if __name__ == '__main__':
     host = config.get('server', 'host', fallback='127.0.0.1')
     port = config.getint('server', 'port', fallback=5000)
 
-    print(f"Khởi động server tại http://{host}:{port}")
-    app.run(host=host, port=port)
+    print(f"Khởi động server (Waitress) tại http://{host}:{port}")
+    
+    from waitress import serve
+    serve(app, host=host, port=port)

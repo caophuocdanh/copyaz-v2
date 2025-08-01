@@ -85,6 +85,5 @@ if __name__ == '__main__':
     print(f"Serving content from: {BASE_DIR}")
     print(f"Main HTML file: {TARGET_HTML_FILE}")
     
-    # Chạy server
-    # host='127.0.0.1' để đảm bảo chỉ có thể truy cập từ máy cục bộ
-    app.run(host='127.0.0.1', port=PORT, debug=False)
+    from waitress import serve
+    serve(app, host='127.0.0.1', port=PORT)
