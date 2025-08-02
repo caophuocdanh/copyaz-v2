@@ -165,7 +165,7 @@ class App(tk.Tk):
         try:
             self.app_config.read(config_file, encoding='utf-8')
             host = self.app_config.get('server', 'host', fallback='127.0.0.1')
-            port = self.app_config.get('server', 'port', fallback='5000')
+            port = self.app_config.get('server', 'port', fallback='12345')
             self.server_base_url = f"http://{host}:{port}"
         except (configparser.Error, configparser.NoSectionError) as e:
             self._log(f"Cảnh báo: Lỗi đọc config.ini: {e}\n")
@@ -356,7 +356,7 @@ class App(tk.Tk):
                     self.online_radio_button.config(state="disabled")
             except requests.exceptions.RequestException:
                 self.online_radio_button.config(state="disabled")
-                self._log("Thông báo: Server offline, không thể chọn chế độ Online.\n")
+                self._log("✘ Thông báo: Server offline, không thể chọn chế độ Online.\n")
         threading.Thread(target=check_task, daemon=True).start()
 
     def _render_checkboxes(self, item_list):
@@ -413,8 +413,9 @@ class App(tk.Tk):
                         self._log(f"Đã tải danh sách {len(project_titles)} dự án từ server.\n")
                     else:
                         self._log(f"Lỗi khi lấy danh sách dự án (status: {response.status_code}).\n")
-                except requests.exceptions.RequestException as e:
-                    self._log(f"Lỗi kết nối: {e}\n")
+                except requests.exceptions.RequestException:
+                    self._log("✘ Lỗi kết nối: Không thể kết nối tới server.\n")
+                    self._log("   Server bị mất kết nối, vui lòng kiểm tra lại mạng internet. \n")
                 except json.JSONDecodeError:
                     self._log("Lỗi: Server trả về dữ liệu không phải JSON.\n")
             
@@ -427,7 +428,7 @@ class App(tk.Tk):
         sample_file_name = "index.html"
         full_path = os.path.join(source_dir, sample_folder_name)
         file_path = os.path.join(full_path, sample_file_name)
-        html_content = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Cao Phước Danh</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css"><style>*{font-family:monospace;}.card{box-shadow:0 4px 8px rgba(0,0,0,0.2);max-width:500px;margin:10rem auto 0;text-align:center;}.title{color:grey;font-size:18px;}button{border:none;outline:0;display:inline-block;padding:8px;color:white;background-color:#000;text-align:center;cursor:pointer;width:100%;font-size:18px;}a{text-decoration:none;font-size:22px;color:black;}.fa{width:30px;}i{border:1px solid black;border-radius:50%;height:40px;width:40px!important;text-align:center;line-height:40px!important;}button:hover,a:hover{opacity:0.7;color:red;}.hidden{display:none;}</style></head><body><div class="card"><img src="https://images.pexels.com/photos/1214205/pexels-photo-1214205.jpeg" alt="John" style="width:100%"><h1>Cao Phước Danh</h1><p class="title">IT cu li</p><a href="https://youtube.com"><i class="fa fa-youtube"></i></a><a href="https://facebook.com"><i class="fa fa-facebook"></i></a><p><button onclick="window.location.href='mailto:danhcptube@gmail.com?subject=Hello&body=Hello'">Contact</button></p></div></body></html>"""
+        html_content = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cao Phước Danh</title><link rel="icon" type="image/svg+xml" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="%234CAF50"/><text x="50%%" y="54%%" text-anchor="middle" fill="white" font-size="50" font-family="Arial" dy=".3em">C</text></svg>'><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:linear-gradient(135deg,#f5f7fa,#c3cfe2);display:flex;justify-content:center;align-items:center;min-height:100vh;color:#333}.card{width:90%;max-width:400px;background-color:#fff;border-radius:20px;box-shadow:0 10px 30px rgba(0,0,0,.1);text-align:center;overflow:hidden;transition:transform .3s ease,box-shadow .3s ease}.card:hover{box-shadow:0 20px 40px rgba(0,0,0,.55)}.card-header{background-color:#0077b5;height:120px;position:relative}.profile-icon{width:150px;height:150px;border-radius:50%;background:linear-gradient(135deg,#e0eafc,#cfdef3);border:5px solid #fff;box-shadow:0 5px 15px rgba(0,0,0,.1);display:flex;justify-content:center;align-items:center;font-size:5rem;position:absolute;bottom:-75px;left:50%;transform:translateX(-50%)}.card-body{padding:25px 20px 30px;padding-top:90px}.name{font-size:2em;font-weight:700;color:#1a1a1a}.title{font-size:1.1em;color:#666;margin-bottom:20px;font-weight:300}.social-links{display:flex;justify-content:center;gap:15px;margin-bottom:25px}.social-links a{width:50px;height:50px;border-radius:50%;display:flex;justify-content:center;align-items:center;box-shadow:0 4px 10px rgba(0,0,0,.2);transition:all .3s ease;text-decoration:none}.social-links a:hover{transform:scale(1.1);box-shadow:0 4px 10px rgba(0,0,0,.5)}</style></head><body><div class="card"><div class="card-header"><div class="profile-icon"><svg width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div></div><div class="card-body"><h1 class="name">Cao Phước Danh</h1><p class="title">IT Cu li</p><div class="social-links"><a href="https://github.com/caophuocdanh" target="_blank" aria-label="GitHub"><svg width="32" height="32" viewBox="0 0 24 24" fill="black" xmlns="http://www.w3.org/2000/svg"><path d="M12 1C5.9 1 1 5.9 1 12c0 4.9 3.1 9 7.5 10.4.5.1.7-.2.7-.5v-2c-2.8.5-3.5-.7-3.7-1.3-.1-.3-.7-1.3-1.1-1.6-.4-.2-.9-.7-.01-.7.9 0 1.5.8 1.7 1.1.9 1.6 2.6 1.2 3.2.9.1-.7.4-1.2.7-1.5-2.4-.3-5-1.2-5-5.4 0-1.2.4-2.2 1.1-3-.1-.3-.5-1.4.1-2.9 0 0 .9-.3 3 1.1.8-.2 1.7-.4 2.7-.4s1.9.1 2.7.4c2.1-1.4 3-1.1 3-1.1.6 1.5.2 2.6.1 2.9.7.8 1.1 1.7 1.1 3 0 4.2-2.6 5.2-5 5.4.4.3.7 1 .7 2v3c0 .3.2.6.8.5C19.9 21 23 16.9 23 12c0-6.1-4.9-11-11-11z"/></svg></a><a href="http://danhcp.dssddns.net" target="_blank" aria-label="Website"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 0 20"/><path d="M12 2a15.3 15.3 0 0 0 0 20"/></svg></a></div></div></div></body></html>"""
         try:
             os.makedirs(full_path)
             with open(file_path, 'w', encoding='utf-8') as f:

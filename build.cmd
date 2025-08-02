@@ -1,4 +1,4 @@
-pip install Flask pyinstaller pywin32 waitress
+pip install -r requirements.txt
 rmdir /S /Q build
 rmdir /S /Q dist
 

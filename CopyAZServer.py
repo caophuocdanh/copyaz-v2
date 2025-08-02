@@ -44,7 +44,7 @@ def create_list_json():
     try:
         with open(list_json_path, 'w', encoding='utf-8') as f:
             json.dump(projects, f, ensure_ascii=False, indent=4)
-        logging.info(f"Tệp list.json đã được tạo/cập nhật thành công tại: {list_json_path}")
+        logging.info(f"\nTệp list.json đã được tạo/cập nhật thành công.\n{list_json_path}")
         return True
     except IOError as e:
         logging.error(f"Lỗi khi tạo/ghi tệp list.json tại {list_json_path}: {e}")
@@ -85,7 +85,7 @@ if __name__ == '__main__':
     
     config = configparser.ConfigParser()
     config.read(os.path.join(APP_ROOT_DIR, 'config.ini'))
-    host = config.get('server', 'host', fallback='127.0.0.1')
+    host = '0.0.0.0' #config.get('server', 'host', fallback='127.0.0.1')
     port = config.getint('server', 'port', fallback=5000)
 
     print(f"Khởi động server (Waitress) tại http://{host}:{port}")
