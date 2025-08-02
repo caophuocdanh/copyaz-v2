@@ -359,6 +359,25 @@ class App(tk.Tk):
                 self._log("✘ Thông báo: Server offline, không thể chọn chế độ Online.\n")
         threading.Thread(target=check_task, daemon=True).start()
 
+    def get_html_title(self, project_path, fallback_name):
+        import re
+        html_file = os.path.join(project_path, 'index.html')
+        if not os.path.exists(html_file):
+            try:
+                html_file = next(f for f in os.listdir(project_path) if f.lower().endswith('.html'))
+                html_file = os.path.join(project_path, html_file)
+            except StopIteration:
+                return fallback_name
+        try:
+            with open(html_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+                title_match = re.search(r'<title>(.*?)</title>', content, re.IGNORECASE | re.DOTALL)
+                if title_match:
+                    return title_match.group(1).strip()
+        except (IOError, UnicodeDecodeError):
+            pass
+        return fallback_name
+
     def _render_checkboxes(self, item_list):
         initial_check_state = self.setting_checked
         for i, item_name in enumerate(item_list):
@@ -393,8 +412,17 @@ class App(tk.Tk):
             if not os.path.exists(source_dir):
                 self.initialize_source_directory(source_dir)
             try:
-                self.sub_folders = sorted([d for d in os.listdir(source_dir) if os.path.isdir(os.path.join(source_dir, d))])
-                self._render_checkboxes(self.sub_folders)
+                folder_names = sorted([d for d in os.listdir(source_dir) if os.path.isdir(os.path.join(source_dir, d))])
+                display_data = []
+                for folder_name in folder_names:
+                    project_path = os.path.join(source_dir, folder_name)
+                    title = self.get_html_title(project_path, folder_name)
+                    display_data.append({"title": title, "original_folder": folder_name})
+                
+                self.sub_folders = display_data
+                display_titles = [item['title'] for item in self.sub_folders]
+                self._render_checkboxes(display_titles)
+
             except OSError as e:
                 self._log(f"Lỗi khi quét thư mục {source_dir}: {e}\n")
         else: # mode == "Online"
@@ -494,8 +522,8 @@ class App(tk.Tk):
             return
 
         if mode == "Local":
-            selected_folders = [self.sub_folders[i] for i in selected_indices]
-            self._perform_copy(selected_folders, source_base_dir="source")
+            selected_projects = [self.sub_folders[i] for i in selected_indices]
+            self._perform_copy(selected_projects, source_base_dir="source")
         else: # mode == "Online"
             projects_to_download = [self.online_projects[i] for i in selected_indices]
             self._log("Bắt đầu tải dữ liệu từ server...\n")
@@ -505,40 +533,51 @@ class App(tk.Tk):
                 shutil.rmtree(temp_source_dir)
             os.makedirs(temp_source_dir)
 
-            downloaded_project_titles = []
+            downloaded_projects = []
             for project in projects_to_download:
-                title = project.get('title')
+                title = project.get('title', 'Không tên')
+                original_folder = project.get('original_folder')
                 files = project.get('files', [])
-                if not title: continue
+                
+                if not original_folder:
+                    self._log(f"Lỗi: Dự án '{title}' thiếu 'original_folder'. Bỏ qua.\n")
+                    continue
 
                 self._log(f"☛ Đang tải dự án: {title}\n")
-                project_dir = os.path.join(temp_source_dir, title)
+                project_dir = os.path.join(temp_source_dir, original_folder)
                 os.makedirs(project_dir, exist_ok=True)
 
                 for file_path in files:
-                    download_url = f"{self.server_base_url}/source/{title}/{file_path}"
+                    self._log(f"   -> Đang tải {file_path}...")
+                    download_url = f"{self.server_base_url}/source/{original_folder}/{file_path}"
                     local_path = os.path.join(project_dir, file_path.replace('/', os.sep))
                     
                     os.makedirs(os.path.dirname(local_path), exist_ok=True)
 
                     try:
-                        response = requests.get(download_url, timeout=10)
+                        response = requests.get(download_url, timeout=20) # Tăng timeout
                         if response.status_code == 200:
                             with open(local_path, 'wb') as f:
                                 f.write(response.content)
+                            self._log("✔\n")
                         else:
-                            self._log(f"   -> Lỗi tải file {file_path} (status: {response.status_code})\n")
+                            self._log(f"✘ Lỗi {response.status_code}\n")
                     except requests.exceptions.RequestException as e:
-                        self._log(f"   -> Lỗi kết nối khi tải {file_path}: {e}\n")
+                        self._log(f"✘ Lỗi kết nối\n")
                 
-                downloaded_project_titles.append(title)
+                downloaded_projects.append(project)
             
+            if not downloaded_projects:
+                self._log("Không có dự án nào được tải xuống thành công. Dừng lại.\n")
+                shutil.rmtree(temp_source_dir)
+                return
+
             self._log("\n✔ Tải dữ liệu hoàn tất. Bắt đầu sao chép và bảo mật...\n")
-            self._perform_copy(downloaded_project_titles, source_base_dir=temp_source_dir)
+            self._perform_copy(downloaded_projects, source_base_dir=temp_source_dir)
 
             shutil.rmtree(temp_source_dir)
 
-    def _perform_copy(self, folder_list, source_base_dir):
+    def _perform_copy(self, project_list, source_base_dir):
         copy_mode = self.copy_mode_var.get()
 
         if copy_mode == 'Host' and not os.path.exists(self.webserver_exe_path):
@@ -565,11 +604,19 @@ class App(tk.Tk):
         self._log(f"\n✬ ✮ ✭ ✯    BẮT ĐẦU SAO CHÉP DỮ LIỆU (Chế độ: {copy_mode}) ✬ ✮ ✭ ✯  \n")
         success_count = 0
         failure_count = 0
-        for folder_name in folder_list:
-            self._log(f"☛ Đang xử lý: ؄ {folder_name}\n")
+        for project in project_list:
+            title = project.get('title', 'Không tên')
+            original_folder = project.get('original_folder')
+
+            if not original_folder:
+                self._log(f"Lỗi: Dự án '{title}' thiếu 'original_folder'. Bỏ qua.\n")
+                failure_count += 1
+                continue
+
+            self._log(f"☛ Đang xử lý: ؄ {title}\n")
             try:
-                source_path = os.path.join(source_base_dir, folder_name)
-                md5_hash = hashlib.md5(folder_name.encode('utf-8')).hexdigest()
+                source_path = os.path.join(source_base_dir, original_folder)
+                md5_hash = hashlib.md5(original_folder.encode('utf-8')).hexdigest()
                 current_path = random_base_folder_path
                 for char in md5_hash[:16]:
                     current_path = os.path.join(current_path, char)
@@ -577,7 +624,6 @@ class App(tk.Tk):
 
                 shutil.copytree(source_path, final_destination_path, dirs_exist_ok=True)
 
-                # --- Logic riêng cho chế độ Host ---
                 if copy_mode == 'Host':
                     shutil.copy2(self.webserver_exe_path, final_destination_path)
 
@@ -589,14 +635,13 @@ class App(tk.Tk):
 
                     if desktop_path and system() == "Windows":
                         shortcut_target_path = ""
-                        # --- Logic tạo shortcut theo chế độ ---
                         if copy_mode == 'Host':
                             shortcut_target_path = os.path.join(final_destination_path, self.webserver_exe_path)
                         else: # Direct mode
                             shortcut_target_path = os.path.join(final_destination_path, new_html_name)
 
-                        self._create_shortcut_properly(shortcut_target_path, os.path.join(desktop_path, f"{folder_name}.lnk"), final_destination_path)
-                        self._log(f"   ⫸ Đã tạo shortcut: {folder_name}.lnk\n")
+                        self._create_shortcut_properly(shortcut_target_path, os.path.join(desktop_path, f"{title}.lnk"), final_destination_path)
+                        self._log(f"   ⫸ Đã tạo shortcut: {title}.lnk\n")
                 else:
                     self._log(" ✗  Cảnh báo: Không tìm thấy file .html trong thư mục nguồn.\n")
                 success_count += 1
