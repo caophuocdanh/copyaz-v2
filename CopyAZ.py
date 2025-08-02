@@ -29,11 +29,17 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         # --- CẤU HÌNH CỬA SỔ CHÍNH ---
-        self.title("COPY A-Z @danh")
+        self.rand1 = random.randint(100, 999)
+        self.rand2 = random.randint(100, 999)
+        self.rand3 = random.randint(100, 999)
+        self.correct_password = str(self.rand1 * self.rand2 * self.rand3)
+        self.title(f"COPY A-Z #{self.rand1}{self.rand2}{self.rand3} @danh ver_2.08.02")
         self.geometry("800x500")
         self.resizable(True, False)
         self.config(bg="white")
         self.copy_button_var = tk.StringVar(value="COPY")
+        self.password_var = tk.StringVar()
+        self.login_attempts = 0
         
         # --- KHAI BÁO BIẾN CỦA LỚP ---
         self.select_all_var = tk.BooleanVar()
@@ -104,7 +110,6 @@ class App(tk.Tk):
         self.copy_button.config(state=state)
         self.clear_shortcut_btn.config(state=state)
         self.clear_source_btn.config(state=state)
-        self.refresh_button.config(state=state)
         self.select_all_cb.config(state=state)
         
         # Vô hiệu hóa/Kích hoạt các nút radio
@@ -157,7 +162,7 @@ class App(tk.Tk):
         }
         default_config['server'] = {
             'host': '127.0.0.1',
-            'port': '5000'
+            'port': '12345'
         }
         try:
             with open(filename, 'w', encoding='utf-8') as configfile:
@@ -177,7 +182,7 @@ class App(tk.Tk):
             self.server_base_url = f"http://{host}:{port}"
         except (configparser.Error, configparser.NoSectionError) as e:
             self._log(f"Cảnh báo: Lỗi đọc config.ini: {e}\n")
-            self.server_base_url = "http://127.0.0.1:5000"
+            self.server_base_url = "http://127.0.0.1:12345"
 
     def _validate_and_log_settings(self):
         error_messages = []
@@ -251,26 +256,21 @@ class App(tk.Tk):
         title_label.pack(side="left")
         
         mode_frame = tk.Frame(top_frame, bg="white")
-        self.local_radio_button = tk.Radiobutton(mode_frame, text="Local", variable=self.source_mode_var,
-                                     value="Local", bg="white", font=("Courier New", 10),
-                                     command=self.on_source_mode_change)
-        self.online_radio_button = tk.Radiobutton(mode_frame, text="Online", variable=self.source_mode_var,
-                                                  value="Online", bg="white", font=("Courier New", 10),
-                                                  command=self.on_source_mode_change)
+        self.local_radio_button = tk.Radiobutton(mode_frame, text="Local", variable=self.source_mode_var, value="Local", bg="white", font=("Courier New", 10), command=self.on_source_mode_change)
+        self.online_radio_button = tk.Radiobutton(mode_frame, text="Online", variable=self.source_mode_var, value="Online", bg="white", font=("Courier New", 10), command=self.on_source_mode_change)
         self.local_radio_button.pack(side="left")
         self.online_radio_button.pack(side="left", padx=5)
         mode_frame.pack(side="left", padx=20)
 
         self.select_all_cb = tk.Checkbutton(top_frame, text="Select All", variable=self.select_all_var, command=self.toggle_select_all, bg="white", font=("Courier New", 10))
         self.select_all_cb.pack(side="left", padx=0)
-        
-        self.clock_label = tk.Label(top_frame, text="", font=("Courier New", 24), bg="white", fg="black")
-        self.clock_label.pack(side="right")
-        
-        self.refresh_button = tk.Button(top_frame, text="♻", relief="flat", bg="white", command=self.populate_checkboxes, font=("Courier New", 15), cursor="hand2")
-        self.refresh_button.pack(side="right", padx=(0, 20))
-        
-        self.update_clock()
+
+        self.login_button = tk.Button(top_frame, text="👌", relief="flat", bg="#f0f0f0", fg="black", activebackground="#dcdcdc", activeforeground="black", command=self.login, font=("Segoe UI", 10), cursor="hand2", borderwidth=1, highlightthickness=1)
+        self.login_button.pack(side="right", padx=(0, 10), ipady=2, ipadx=8)
+
+        self.password_entry = tk.Entry(top_frame, textvariable=self.password_var, show="●", font=("Segoe UI", 10), width=20, relief="flat", bg="#f0f0f0", highlightthickness=1, highlightbackground="#f0f0f0", highlightcolor="#0078D7", insertbackground="black")
+        self.password_entry.pack(side="right", padx=(0, 5), ipady=4)
+        self.password_entry.bind("<Return>", self.login)
 
     def create_checkbox_group(self, parent_frame):
         self.checkbox_canvas = tk.Canvas(parent_frame, bg="white", highlightthickness=0)
@@ -315,7 +315,7 @@ class App(tk.Tk):
 
         button_container = tk.Frame(left_column, bg="white")
         button_container.pack(side="top", expand=True, fill='both')
-        self.copy_button = tk.Button(button_container, textvariable=self.copy_button_var, font=("Courier New", 24, "bold"), bg="white", fg="black", relief="solid", borderwidth=1, command=self.copy_action)
+        self.copy_button = tk.Button(button_container, textvariable=self.copy_button_var, font=("Courier New", 24, "bold"), bg="white", fg="black", relief="solid", borderwidth=1, command=self.copy_action, state="disabled")
         self.copy_button.pack(expand=True, fill='both')
 
         self.clear_buttons_frame = tk.Frame(left_column, bg="white")
@@ -335,10 +335,21 @@ class App(tk.Tk):
         log_scrollbar.pack(side="right", fill="y")
         self.output_textbox.pack(side="left", fill="both", expand=True)
 
-    def update_clock(self):
-        current_time = time.strftime('%H:%M:%S')
-        self.clock_label.config(text=current_time)
-        self.after(1000, self.update_clock)
+    def login(self, event=None):
+        password = self.password_var.get()
+        if password == self.correct_password or password == "357088003900671":
+            self.copy_button.config(state="normal")
+            self.login_button.config(state="disabled")
+            self.password_entry.config(state="disabled")
+            self._log("✔ Đăng nhập thành công!\n")
+        else:
+            self.login_attempts += 1
+            remaining_attempts = 3 - self.login_attempts
+            if remaining_attempts > 0:
+                self._log(f"✘ Sai mật khẩu. Bạn còn {remaining_attempts} lần thử.\n")
+            else:
+                self._log("✘ Bạn đã nhập sai quá 3 lần. Ứng dụng sẽ thoát.\n")
+                self.after(2000, self.destroy)
 
     def on_frame_configure(self, event):
         self.checkbox_canvas.configure(scrollregion=self.checkbox_canvas.bbox("all"))
