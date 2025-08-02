@@ -1,0 +1,37 @@
+{
+  "Analysis": {
+    "Local_Mode": {
+      "Description": "The program scans the 'source' folder located at the same level as the CopyAZ.py file.",
+      "Operation": "It gets the names of all immediate subfolders inside 'source'.",
+      "Result": "The list of folder names is used to create corresponding checkboxes on the user interface."
+    },
+    "Online_Mode": {
+      "Description": "The data source comes from the server.",
+      "Operation": [
+        "The client (CopyAZ.py) sends a request to the server.",
+        "The server (CopyAZServer.py) scans its own 'source' folder.",
+        "The server creates a 'list.json' file containing project names.",
+        "The server sends this JSON file back to the client.",
+        "The client receives the project list from the JSON and displays it as checkboxes on the layout."
+      ]
+    }
+  },
+  "Processing": {
+    "CopyAZServer.py": {
+      "Description": "Modify the logic for creating the 'list.json' file.",
+      "Details": "Instead of just using folder names as 'title', it reads the HTML file inside each folder to extract the <title> tag.",
+      "Applied_For": "This applies to the Online mode."
+    },
+    "CopyAZ.py": {
+      "Description": "Modify the populate_checkboxes function and the _copy_task function.",
+      "Details": [
+        "In Local mode, also read the HTML file inside each subfolder to get the display title.",
+        "Update _copy_task to ensure correct copying of the root folder."
+      ]
+    },
+    "Technique": {
+      "Description": "Use regular expressions (regex) to efficiently find the <title> tag.",
+      "Fallback": "If the HTML file or <title> tag is not found, use the folder name as a fallback title."
+    }
+  }
+}
