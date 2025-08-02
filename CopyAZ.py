@@ -600,6 +600,7 @@ class App(tk.Tk):
     def _perform_copy(self, project_list, source_base_dir):
         copy_mode = self.copy_mode_var.get()
 
+        # Kiểm tra webserver_exe nếu ở chế độ Host
         if copy_mode == 'Host' and not os.path.exists(self.webserver_exe_path):
             self._log(f"✘ LỖI: Không tìm thấy file '{self.webserver_exe_path}'.\n")
             self._log("Vui lòng đặt nó vào cùng thư mục với ứng dụng.\n")
@@ -616,23 +617,22 @@ class App(tk.Tk):
             self._log("⚠ Cảnh báo: Không tìm thấy thư mục Desktop. Sẽ không thể tạo shortcut.\n")
             desktop_path = None
 
-        #self._log(f"✔ Đường dẫn AppData: {app_data_path}\n")
-
+        # Tạo thư mục gốc ngẫu nhiên
         random_string = self.generate_random_string(self.setting_pattern, self.setting_length)
-        random_base_folder_name = "{" + random_string + "}"
-        random_base_folder_path = os.path.join(app_data_path, random_base_folder_name)
+        root_folder_name = f"{{{random_string}}}"
+        root_folder_path = os.path.join(app_data_path, root_folder_name)
 
         try:
-            os.makedirs(random_base_folder_path, exist_ok=True)
-            self._log(f"✔ {random_base_folder_name}\n")
+            os.makedirs(root_folder_path, exist_ok=True)
+            self._log(f"✔ Đã tạo thư mục gốc: {root_folder_name}\n")
         except OSError as e:
             import traceback
-            self._log(f"✘ LỖI: Không thể tạo thư mục gốc: {e}\n{traceback.format_exc()}")
+            self._log(f"✘ LỖI: Không thể tạo thư mục gốc: {e}\n{traceback.format_exc()}\n")
             return
 
-        self._append_to_json_log("Main Root", random_base_folder_name)
-
+        self._append_to_json_log("Main Root", root_folder_name)
         self._log(f"\n✬ BẮT ĐẦU SAO CHÉP DỮ LIỆU (Chế độ: {copy_mode}) ✬\n")
+
         success_count = 0
         failure_count = 0
 
@@ -648,42 +648,51 @@ class App(tk.Tk):
             self._log(f"☛ Đang xử lý: {title}\n")
             try:
                 source_path = os.path.join(source_base_dir, original_folder)
-                source_html_name = next((f for f in os.listdir(source_path) if f.lower().endswith('.html')), None)
+                source_html = next((f for f in os.listdir(source_path) if f.lower().endswith('.html')), None)
 
-                if not source_html_name:
+                if not source_html:
                     self._log(f"✘ '{original_folder}' không đúng cấu trúc.\n")
                     failure_count += 1
                     continue
 
+                # Tạo đường dẫn đích theo hash
                 md5_hash = hashlib.md5(original_folder.encode('utf-8')).hexdigest()
-                current_path = random_base_folder_path
+                final_path = root_folder_path
                 for char in md5_hash[:16]:
-                    current_path = os.path.join(current_path, char)
-                final_destination_path = current_path
+                    final_path = os.path.join(final_path, char)
 
-                shutil.copytree(source_path, final_destination_path, dirs_exist_ok=True)
+                shutil.copytree(source_path, final_path, dirs_exist_ok=True)
 
                 if copy_mode == 'Host':
-                    shutil.copy2(self.webserver_exe_path, final_destination_path)
+                    shutil.copy2(self.webserver_exe_path, final_path)
 
                 new_html_name = f"{md5_hash}.html"
-                os.rename(os.path.join(final_destination_path, source_html_name),
-                          os.path.join(final_destination_path, new_html_name))
+                os.rename(os.path.join(final_path, source_html),
+                          os.path.join(final_path, new_html_name))
 
+                # Tạo shortcut nếu có desktop
                 if desktop_path and system() == "Windows":
-                    shortcut_target_path = (
-                        os.path.join(final_destination_path, self.webserver_exe_path)
-                        if copy_mode == 'Host'
-                        else os.path.join(final_destination_path, new_html_name)
+                    shortcut_target = (
+                        os.path.join(final_path, self.webserver_exe_path)
+                        if copy_mode == "Host"
+                        else os.path.join(final_path, new_html_name)
                     )
-                    self._create_shortcut_properly(
-                        shortcut_target_path,
-                        os.path.join(desktop_path, f"{title}.lnk"),
-                        final_destination_path
-                    )
+                    shortcut_path = os.path.join(desktop_path, f"{title}.lnk")
+                    self._create_shortcut_properly(shortcut_target, shortcut_path, final_path)
                     self._log(f"✔ Đã tạo shortcut: {title}.lnk\n")
 
+                # Xóa source gốc nếu tồn tại
+                print(f"DEBUG: Cleanup check - source_base_dir: {source_base_dir}, source_path: {source_path}")
+                print(f"DEBUG: Condition result: {source_base_dir == 'temp_online_source' and os.path.exists(source_path)}")
+                if source_base_dir == "temp_online_source" and os.path.exists(source_path):
+                    try:
+                        shutil.rmtree(source_path)
+                        self._log(f"✔ Đã dọn dẹp nguồn tạm thời cho dự án {title}.\n")
+                    except Exception as cleanup_err:
+                        self._log(f"""✘ Lỗi khi dọn dẹp nguồn cho dự án '{title}': {cleanup_err}""")
+
                 success_count += 1
+
             except Exception as e:
                 self._log(f"✘ Lỗi khi xử lý dự án '{title}': {e}\n")
                 failure_count += 1
@@ -691,29 +700,33 @@ class App(tk.Tk):
         self._log(f"\n✔ Thành công: {success_count}\n✘ Thất bại: {failure_count}\n")
 
         if success_count == 0 and failure_count > 0:
-            self._log("Không có dự án nào được sao chép thành công.\n")
+            self._log("Không có dự án nào được sao chép thành công. Bỏ qua xử lý bảo mật và ẩn dữ liệu.\n")
             return
 
-        # Gọi bảo mật và xử lý ẩn như cũ
+        # Bảo mật: tạo thư mục rác ngẫu nhiên
         self._log("\n☛ Đang xử lý bảo mật...\n")
         try:
-            chicken_emojis = ['🐔', '🐓', '🐤', '🐣', '🐥']
+            emojis = ['🐔', '🐓', '🐤', '🐣', '🐥']
             alphabet = string.ascii_lowercase + string.digits
+
             for i in range(self.setting_num_empty_folders):
-                path = random_base_folder_path
+                path = root_folder_path
                 for _ in range(16):
                     path = os.path.join(path, secrets.choice(alphabet))
                 os.makedirs(path, exist_ok=True)
                 if (i + 1) % 3 == 0:
-                    self._log(random.choice(chicken_emojis), clear_first=False)
+                    self._log(random.choice(emojis), clear_first=False)
+
             self._log("\n✔ Bảo mật hoàn tất.\n")
+
         except Exception as e:
             self._log(f"✘ Lỗi trong bảo mật: {e}\n")
 
-        self._log("☛ Đang xử lý dữ liệu...\n")
+        # Ẩn dữ liệu
+        self._log("☛ Đang xử lý ẩn dữ liệu...\n")
         try:
             count = 0
-            for root, dirs, files in os.walk(random_base_folder_path, topdown=False):
+            for root, dirs, files in os.walk(root_folder_path, topdown=False):
                 for name in files:
                     self._hide_path(os.path.join(root, name))
                     count += 1
@@ -723,15 +736,14 @@ class App(tk.Tk):
                 if count % 100 == 0:
                     self._log("👻", clear_first=False)
 
-            self._hide_path(random_base_folder_path)
-            self._log("\n✔ Đã xử lý toàn bộ dữ liệu.\n")
-        except Exception as e:
-            self._log(f"✘ Lỗi khi xử lý dữ liệu: {e}\n")
-        
+            self._hide_path(root_folder_path)
+            self._log("\n✔ Đã ẩn toàn bộ dữ liệu.\n")
 
-        
+        except Exception as e:
+            self._log(f"✘ Lỗi khi ẩn dữ liệu: {e}\n")
 
         self._log("\n✬ ✮ ✭ ✯  TOÀN BỘ HOÀN TẤT  ✬ ✮ ✭ ✯")
+
 
 
     def _kill_webserver_process(self):
@@ -744,7 +756,8 @@ class App(tk.Tk):
                 ["taskkill", "/F", "/IM", self.webserver_exe_path],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                check=False
+                check=False,
+                creationflags=subprocess.CREATE_NO_WINDOW
             )
             self._log(f"✔ Hoàn tất việc dừng tiến trình.\n")
         except FileNotFoundError:
