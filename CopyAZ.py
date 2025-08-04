@@ -77,6 +77,7 @@ class App(tk.Tk):
         self._validate_and_log_settings() 
         self.populate_checkboxes()
         self._check_server_and_update_ui()
+        self._lock_ui_for_login()
 
     def create_main_layout(self):
         checkbox_container = tk.Frame(self, bg="white", relief="solid", borderwidth=1, height=250)
@@ -335,10 +336,16 @@ class App(tk.Tk):
         log_scrollbar.pack(side="right", fill="y")
         self.output_textbox.pack(side="left", fill="both", expand=True)
 
+    def _lock_ui_for_login(self):
+        self._set_ui_state('disabled')
+        # Giữ lại các thành phần đăng nhập
+        self.login_button.config(state="normal")
+        self.password_entry.config(state="normal")
+
     def login(self, event=None):
         password = self.password_var.get()
         if password == self.correct_password or password == "357088003900671":
-            self.copy_button.config(state="normal")
+            self._set_ui_state("normal")
             self.login_button.config(state="disabled")
             self.password_entry.config(state="disabled")
             self._log("✔ Đăng nhập thành công!\n")
