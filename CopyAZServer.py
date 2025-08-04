@@ -128,4 +128,4 @@ if __name__ == '__main__':
     print(f"Khởi động server (Waitress) tại http://{host}:{port}")
     
     from waitress import serve
-    serve(app, host=host, port=port)
+    serve(app, host=host, port=port, threads=20)
