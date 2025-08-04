@@ -53,19 +53,28 @@ def create_list_json():
         project_path = os.path.join(source_dir, project_name)
         if os.path.isdir(project_path):
             
-            # Get display title from HTML
             display_title = get_html_title(project_path, project_name)
-
-            project_data = {
-                "title": display_title,
-                "original_folder": project_name, # Keep original folder name for reference
-                "files": []
-            }
+            
+            files_data = []
+            total_project_size = 0
             for dirpath, _, filenames in sorted(os.walk(project_path)):
                 for filename in sorted(filenames):
                     full_path = os.path.join(dirpath, filename)
                     relative_path = os.path.relpath(full_path, project_path).replace('\\', '/')
-                    project_data["files"].append(relative_path)
+                    try:
+                        file_size = os.path.getsize(full_path)
+                        files_data.append({"path": relative_path, "size": file_size})
+                        total_project_size += file_size
+                    except OSError:
+                        # Ignore files that can't be accessed
+                        pass
+
+            project_data = {
+                "title": display_title,
+                "original_folder": project_name,
+                "total_size": total_project_size,
+                "files": files_data
+            }
             projects.append(project_data)
 
     list_json_path = os.path.join(script_dir, 'list.json')

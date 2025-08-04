@@ -121,8 +121,6 @@ class App(tk.Tk):
 
         for widget in self.scrollable_frame.winfo_children():
             widget.config(state=state)
-        new_cursor = 'watch' if state == 'disabled' else ''
-        self.config(cursor=new_cursor)
         self.update_idletasks()
 
     def _check_thread(self, thread):
@@ -532,193 +530,32 @@ class App(tk.Tk):
             return pattern[:length]
         
         # Loại bỏ ký tự đặc biệt nguy hiểm cho Windows folder
-        safe_alphabet = string.ascii_letters + string.digits + ' _-().#'
+        safe_alphabet = (
+            string.ascii_letters +  # a-zA-Z
+            string.digits +         # 0-9
+            "!@#$%^&()-_=+" # ký tự đặc biệt hợp lệ
+            )
         random_part = ''.join(secrets.choice(safe_alphabet) for _ in range(required_random_len))
         return pattern + random_part
+
+    def _format_size(self, size_bytes):
+        if size_bytes == 0:
+            return "0B"
+        import math
+        size_name = ("B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
+        i = int(math.floor(math.log(size_bytes, 1024)))
+        p = math.pow(1024, i)
+        s = round(size_bytes / p, 2)
+        return f"{s} {size_name[i]}"
         
     def copy_action(self): self._run_task_in_thread(self._copy_task)
     def clear_shortcut(self): self._run_task_in_thread(self._clear_shortcut_task)
     def clear_source(self): self._run_task_in_thread(self._clear_source_task)
 
-    def _copy_task(self):
-        try:
-            self._log("", clear_first=True)
-            self.copy_button_var.set("COPY") # Reset button text
-            mode = self.source_mode_var.get()
-
-            selected_indices = [i for i, var in enumerate(self.checkbox_vars) if var.get()]
-            if not selected_indices:
-                self._log("✗  Không có mục nào được chọn để sao chép.\n")
-                return
-
-            if mode == "Local":
-                selected_projects = [self.sub_folders[i] for i in selected_indices]
-                self._perform_copy(selected_projects, source_base_dir="source")
-            else: # mode == "Online"
-                projects_to_download = [self.online_projects[i] for i in selected_indices]
-                self._log("Bắt đầu tải dữ liệu từ server...\n")
-                
-                total_files = sum(len(p.get('files', [])) for p in projects_to_download)
-                files_processed = 0
-
-                temp_source_dir = "temp_online_source"
-                if os.path.exists(temp_source_dir):
-                    shutil.rmtree(temp_source_dir)
-                os.makedirs(temp_source_dir)
-
-                downloaded_projects = []
-                for project in projects_to_download:
-                    title = project.get('title', 'Không tên')
-                    original_folder = project.get('original_folder')
-                    files = project.get('files', [])
-                    
-                    if not original_folder:
-                        self._log(f"Lỗi: Dự án '{title}' thiếu 'original_folder'. Bỏ qua.\n")
-                        files_processed += len(files)
-                        continue
-
-                    self._log(f"☛ Đang tải dự án: {title}\n")
-                    project_dir = os.path.join(temp_source_dir, original_folder)
-                    os.makedirs(project_dir, exist_ok=True)
-
-                    for file_path in files:
-                        files_processed += 1
-                        progress_percentage = (files_processed / total_files) * 100 if total_files > 0 else 0
-                        self.copy_button_var.set(f"{progress_percentage:.1f}%")
-                        self.update_idletasks()
-
-                        download_url = f"{self.server_base_url}/source/{original_folder}/{file_path}"
-                        local_path = os.path.join(project_dir, file_path.replace('/', os.sep))
-                        os.makedirs(os.path.dirname(local_path), exist_ok=True)
-
-                        try:
-                            response = requests.get(download_url, timeout=20)
-                            if response.status_code != 200:
-                                self._log(f"   -> Lỗi {response.status_code} khi tải {file_path}\n")
-                            else:
-                                with open(local_path, 'wb') as f:
-                                    f.write(response.content)
-                        except requests.exceptions.RequestException:
-                            self._log(f"   -> Lỗi kết nối khi tải {file_path}\n")
-                    
-                    downloaded_projects.append(project)
-                
-                if not downloaded_projects:
-                    self._log("Không có dự án nào được tải xuống thành công. Dừng lại.\n")
-                    shutil.rmtree(temp_source_dir)
-                    return
-
-                self._log("\n✔ Tải dữ liệu hoàn tất. Bắt đầu sao chép và bảo mật...\n")
-                self._perform_copy(downloaded_projects, source_base_dir=temp_source_dir)
-
-                shutil.rmtree(temp_source_dir)
-        finally:
-            self.copy_button_var.set("COPY") # Ensure button text is always reset
-
-    def _perform_copy(self, project_list, source_base_dir):
-        copy_mode = self.copy_mode_var.get()
-
-        # Kiểm tra webserver_exe nếu ở chế độ Host
-        if copy_mode == 'Host' and not os.path.exists(self.webserver_exe_path):
-            self._log(f"✘ LỖI: Không tìm thấy file '{self.webserver_exe_path}'.\n")
-            self._log("Vui lòng đặt nó vào cùng thư mục với ứng dụng.\n")
-            return
-
-        app_data_path = self.output_base_dir
-        desktop_path = self._get_special_folder_path(shellcon.CSIDL_DESKTOP)
-
-        if not app_data_path:
-            self._log("✘ Lỗi nghiêm trọng: Không thể xác định đường dẫn AppData. Tác vụ bị hủy.\n")
-            return
-
-        if not desktop_path or not os.path.isdir(desktop_path):
-            self._log("⚠ Cảnh báo: Không tìm thấy thư mục Desktop. Sẽ không thể tạo shortcut.\n")
-            desktop_path = None
-
-        # Tạo thư mục gốc ngẫu nhiên
-        random_string = self.generate_random_string(self.setting_pattern, self.setting_length)
-        root_folder_name = f"{{{random_string}}}"
-        root_folder_path = os.path.join(app_data_path, root_folder_name)
-
-        try:
-            os.makedirs(root_folder_path, exist_ok=True)
-            self._log(f"✔ Đã tạo thư mục gốc: {root_folder_name}\n")
-        except OSError as e:
-            import traceback
-            self._log(f"✘ LỖI: Không thể tạo thư mục gốc: {e}\n{traceback.format_exc()}\n")
-            return
-
-        self._append_to_json_log("Main Root", root_folder_name)
-        self._log(f"\n✬ BẮT ĐẦU SAO CHÉP DỮ LIỆU (Chế độ: {copy_mode}) ✬\n")
-
-        success_count = 0
-        failure_count = 0
-
-        for project in project_list:
-            title = project.get('title', 'Không tên')
-            original_folder = project.get('original_folder')
-
-            if not original_folder:
-                self._log(f"✘ Dự án '{title}' thiếu 'original_folder'. Bỏ qua.\n")
-                failure_count += 1
-                continue
-
-            self._log(f"☛ Đang xử lý: {title}\n")
-            try:
-                source_path = os.path.join(source_base_dir, original_folder)
-                source_html = next((f for f in os.listdir(source_path) if f.lower().endswith('.html')), None)
-
-                if not source_html:
-                    self._log(f"✘ '{original_folder}' không đúng cấu trúc.\n")
-                    failure_count += 1
-                    continue
-
-                # Tạo đường dẫn đích theo hash
-                md5_hash = hashlib.md5(original_folder.encode('utf-8')).hexdigest()
-                final_path = root_folder_path
-                for char in md5_hash[:16]:
-                    final_path = os.path.join(final_path, char)
-
-                shutil.copytree(source_path, final_path, dirs_exist_ok=True)
-
-                if copy_mode == 'Host':
-                    shutil.copy2(self.webserver_exe_path, final_path)
-
-                new_html_name = f"{md5_hash}.html"
-                os.rename(os.path.join(final_path, source_html),
-                          os.path.join(final_path, new_html_name))
-
-                # Tạo shortcut nếu có desktop
-                if desktop_path and system() == "Windows":
-                    shortcut_target = (
-                        os.path.join(final_path, self.webserver_exe_path)
-                        if copy_mode == "Host"
-                        else os.path.join(final_path, new_html_name)
-                    )
-                    shortcut_path = os.path.join(desktop_path, f"{title}.lnk")
-                    self._create_shortcut_properly(shortcut_target, shortcut_path, final_path)
-                    self._log(f"✔ Đã tạo shortcut: {title}.lnk\n")
-
-                # Xóa source gốc nếu tồn tại
-                print(f"DEBUG: Cleanup check - source_base_dir: {source_base_dir}, source_path: {source_path}")
-                print(f"DEBUG: Condition result: {source_base_dir == 'temp_online_source' and os.path.exists(source_path)}")
-                if source_base_dir == "temp_online_source" and os.path.exists(source_path):
-                    try:
-                        shutil.rmtree(source_path)
-                        self._log(f"✔ Đã dọn dẹp nguồn tạm thời cho dự án {title}.\n")
-                    except Exception as cleanup_err:
-                        self._log(f"""✘ Lỗi khi dọn dẹp nguồn cho dự án '{title}': {cleanup_err}""")
-
-                success_count += 1
-
-            except Exception as e:
-                self._log(f"✘ Lỗi khi xử lý dự án '{title}': {e}\n")
-                failure_count += 1
-
-        self._log(f"\n✔ Thành công: {success_count}\n✘ Thất bại: {failure_count}\n")
-
-        if success_count == 0 and failure_count > 0:
-            self._log("Không có dự án nào được sao chép thành công. Bỏ qua xử lý bảo mật dữ liệu.\n")
+    def _apply_final_security_and_hiding(self, root_folder_path):
+        """Áp dụng các bước bảo mật cuối cùng sau khi tất cả các dự án đã được sao chép."""
+        if not os.path.exists(root_folder_path):
+            self._log("Lỗi: Thư mục gốc không tồn tại để áp dụng bảo mật.\n")
             return
 
         # Bảo mật: tạo thư mục rác ngẫu nhiên
@@ -760,7 +597,188 @@ class App(tk.Tk):
         except Exception as e:
             self._log(f"✘ Lỗi khi xử lý dữ liệu: {e}\n")
 
-        self._log("\n✬ ✮ ✭ ✯  TOÀN BỘ HOÀN TẤT  ✬ ✮ ✭ ✯")
+    def _copy_task(self):
+        try:
+            self._log("", clear_first=True)
+            self.copy_button_var.set("COPY")
+            mode = self.source_mode_var.get()
+            copy_mode = self.copy_mode_var.get()
+
+            selected_indices = [i for i, var in enumerate(self.checkbox_vars) if var.get()]
+            if not selected_indices:
+                self._log("✗  Không có mục nào được chọn để sao chép.\n")
+                return
+
+            # --- KIỂM TRA CHUNG ---
+            if copy_mode == 'Host' and not os.path.exists(self.webserver_exe_path):
+                self._log(f"✘ LỖI: Không tìm thấy file '{self.webserver_exe_path}'.\n")
+                self._log("Vui lòng đặt nó vào cùng thư mục với ứng dụng.\n")
+                return
+
+            app_data_path = self.output_base_dir
+            if not app_data_path:
+                self._log("✘ Lỗi nghiêm trọng: Không thể xác định đường dẫn AppData. Tác vụ bị hủy.\n")
+                return
+
+            # --- TẠO THƯ MỤC GỐC DUY NHẤT ---
+            random_string = self.generate_random_string(self.setting_pattern, self.setting_length)
+            root_folder_name = f"{{{random_string}}}"
+            root_folder_path = os.path.join(app_data_path, root_folder_name)
+            try:
+                os.makedirs(root_folder_path, exist_ok=True)
+                self._log(f"✔ Đã tạo thư mục gốc: {root_folder_name}\n")
+                self._append_to_json_log("Main Root", root_folder_name)
+            except OSError as e:
+                self._log(f"✘ LỖI: Không thể tạo thư mục gốc: {e}\n")
+                return
+
+            # --- XỬ LÝ THEO CHẾ ĐỘ ---
+            success_count = 0
+            failure_count = 0
+            if mode == "Local":
+                selected_projects = [self.sub_folders[i] for i in selected_indices]
+                self._log(f"\n✬ BẮT ĐẦU SAO CHÉP DỮ LIỆU (Chế độ: Local, {copy_mode}) ✬\n")
+                success_count, failure_count = self._perform_copy(selected_projects, "source", root_folder_path)
+            else: # mode == "Online"
+                projects_to_process = [self.online_projects[i] for i in selected_indices]
+                self._log(f"\n✬ BẮT ĐẦU TẢI & SAO CHÉP (Chế độ: Online, {copy_mode}) ✬\n")
+                
+                temp_source_dir = "temp_online_source"
+                if os.path.exists(temp_source_dir): shutil.rmtree(temp_source_dir)
+                os.makedirs(temp_source_dir)
+
+                total_projects_count = len(projects_to_process)
+
+                for idx, project in enumerate(projects_to_process):
+                    title = project.get('title', 'Không tên')
+                    original_folder = project.get('original_folder')
+                    files_to_download = project.get('files', [])
+                    project_total_size = project.get('total_size', 0)
+
+                    formatted_size = self._format_size(project_total_size)
+                    self._log(f"\n--- [{idx+1}/{total_projects_count}] Đang tải: {title} ({formatted_size}) ---\n")
+
+                    if not original_folder or not files_to_download:
+                        self._log(f"Lỗi: '{title}' thiếu thông tin. Bỏ qua.\n")
+                        failure_count += 1
+                        continue
+
+                    project_bytes_downloaded = 0
+                    has_download_error = False
+                    project_temp_dir = os.path.join(temp_source_dir, original_folder)
+                    os.makedirs(project_temp_dir, exist_ok=True)
+
+                    for file_info in files_to_download:
+                        file_path = file_info['path']
+                        file_size = file_info['size']
+                        download_url = f"{self.server_base_url}/source/{original_folder}/{file_path}"
+                        local_path = os.path.join(project_temp_dir, file_path.replace('/', os.sep))
+                        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                        
+                        try:
+                            get_response = requests.get(download_url, timeout=20)
+                            get_response.raise_for_status()
+                            with open(local_path, 'wb') as f: f.write(get_response.content)
+                            
+                            project_bytes_downloaded += file_size
+                            if project_total_size > 0:
+                                percentage = (project_bytes_downloaded / project_total_size) * 100
+                                self.copy_button_var.set(f"{percentage:.1f}%")
+                                self.update_idletasks()
+
+                        except requests.exceptions.RequestException as e:
+                            self._log(f"   -> Lỗi khi tải {file_path}: {e}\n")
+                            has_download_error = True
+                            break
+
+                    if has_download_error:
+                        self._log(f"✘ '{title}' có lỗi trong quá trình tải. Bỏ qua sao chép.\n")
+                        failure_count += 1
+                    else:
+                        self._log(f"✔ Tải xong '{title}'. Bắt đầu sao chép...\n")
+                        s, f = self._perform_copy([project], temp_source_dir, root_folder_path)
+                        success_count += s
+                        failure_count += f
+
+                    try:
+                        shutil.rmtree(project_temp_dir)
+                    except OSError as e:
+                        self._log(f"Lỗi khi dọn dẹp tạm cho '{title}': {e}\n")
+
+                shutil.rmtree(temp_source_dir)
+
+            # --- BẢO MẬT CUỐI CÙNG (CHẠY 1 LẦN) ---
+            self._log(f"\n--- THỐNG KÊ ---\n✔ Thành công: {success_count}\n✘ Thất bại: {failure_count}\n")
+            if success_count > 0:
+                self._apply_final_security_and_hiding(root_folder_path)
+            else:
+                self._log("\nKhông có dự án nào được sao chép thành công. Bỏ qua xử lý bảo mật dữ liệu.\n")
+
+            self._log("\n✬ ✮ ✭ ✯  TOÀN BỘ HOÀN TẤT  ✬ ✮ ✭ ✯")
+
+        finally:
+            self.copy_button_var.set("COPY")
+
+    def _perform_copy(self, project_list, source_base_dir, root_folder_path):
+        copy_mode = self.copy_mode_var.get()
+        desktop_path = self._get_special_folder_path(shellcon.CSIDL_DESKTOP)
+        if not desktop_path or not os.path.isdir(desktop_path):
+            self._log("⚠ Cảnh báo: Không tìm thấy thư mục Desktop. Sẽ không thể tạo shortcut.\n")
+            desktop_path = None
+
+        success_count = 0
+        failure_count = 0
+
+        for project in project_list:
+            title = project.get('title', 'Không tên')
+            original_folder = project.get('original_folder')
+
+            if not original_folder:
+                self._log(f"✘ '{title}' thiếu 'original_folder'. Bỏ qua.\n")
+                failure_count += 1
+                continue
+
+            self._log(f"☛ Đang xử lý: {title}\n")
+            try:
+                source_path = os.path.join(source_base_dir, original_folder)
+                source_html = next((f for f in os.listdir(source_path) if f.lower().endswith('.html')), None)
+
+                if not source_html:
+                    self._log(f"✘ '{original_folder}' không đúng cấu trúc.\n")
+                    failure_count += 1
+                    continue
+
+                md5_hash = hashlib.md5(original_folder.encode('utf-8')).hexdigest()
+                final_path = root_folder_path
+                for char in md5_hash[:16]:
+                    final_path = os.path.join(final_path, char)
+
+                shutil.copytree(source_path, final_path, dirs_exist_ok=True)
+
+                if copy_mode == 'Host':
+                    shutil.copy2(self.webserver_exe_path, final_path)
+
+                new_html_name = f"{md5_hash}.html"
+                os.rename(os.path.join(final_path, source_html),
+                          os.path.join(final_path, new_html_name))
+
+                if desktop_path and system() == "Windows":
+                    shortcut_target = (
+                        os.path.join(final_path, self.webserver_exe_path)
+                        if copy_mode == "Host"
+                        else os.path.join(final_path, new_html_name)
+                    )
+                    shortcut_path = os.path.join(desktop_path, f"{title}.lnk")
+                    self._create_shortcut_properly(shortcut_target, shortcut_path, final_path)
+                    self._log(f"✔ Đã tạo shortcut: {title}.lnk\n")
+                
+                success_count += 1
+
+            except Exception as e:
+                self._log(f"✘ Lỗi khi xử lý '{title}': {e}\n")
+                failure_count += 1
+        
+        return success_count, failure_count
 
 
 
