@@ -60,6 +60,7 @@ class App(tk.Tk):
         self.copy_mode_var = tk.StringVar(value="Direct") # 'Direct' hoặc 'Host'
         self.webserver_exe_path = "cp.exe"
         self.output_base_dir = self._get_special_folder_path(shellcon.CSIDL_LOCAL_APPDATA)
+        self.download_only_var = tk.BooleanVar(value=False)
 
         # --- KHỞI TẠO ---
         self.load_config()
@@ -122,6 +123,18 @@ class App(tk.Tk):
 
         for widget in self.scrollable_frame.winfo_children():
             widget.config(state=state)
+
+        # Xử lý riêng cho checkbox "Download"
+        if hasattr(self, 'download_only_cb'):
+            if state == 'disabled':
+                self.download_only_cb.config(state='disabled')
+            else: # state == 'normal'
+                if self.source_mode_var.get() == 'Online':
+                    self.download_only_cb.config(state='normal')
+                else:
+                    self.download_only_cb.config(state='disabled')
+                    self.download_only_var.set(False)
+
         self.update_idletasks()
 
     def _check_thread(self, thread):
@@ -262,6 +275,9 @@ class App(tk.Tk):
         self.select_all_cb = tk.Checkbutton(top_frame, text="Select All", variable=self.select_all_var, command=self.toggle_select_all, bg="white", font=("Courier New", 10))
         self.select_all_cb.pack(side="left", padx=0)
 
+        self.download_only_cb = tk.Checkbutton(top_frame, text="Download", variable=self.download_only_var, bg="white", font=("Courier New", 10))
+        self.download_only_cb.pack(side="left", padx=5)
+
         self.login_button = tk.Button(top_frame, text="👌", relief="flat", bg="#f0f0f0", fg="black", activebackground="#dcdcdc", activeforeground="black", command=self.login, font=("Segoe UI", 10), cursor="hand2", borderwidth=1, highlightthickness=1)
         self.login_button.pack(side="right", padx=(0, 10), ipady=2, ipadx=8)
 
@@ -369,6 +385,8 @@ class App(tk.Tk):
 
     def on_source_mode_change(self):
         self.populate_checkboxes()
+        # Cập nhật trạng thái của checkbox "Download" dựa trên chế độ mới
+        self._set_ui_state('normal')
 
     def _check_server_and_update_ui(self):
         def check_task():
@@ -638,84 +656,92 @@ class App(tk.Tk):
                 self._log(f"\n✬ BẮT ĐẦU SAO CHÉP DỮ LIỆU (Chế độ: Local, {copy_mode}) ✬\n")
                 success_count, failure_count = self._perform_copy(selected_projects, "source", root_folder_path)
             else: # mode == "Online"
-                projects_to_process = [self.online_projects[i] for i in selected_indices]
-                self._log(f"\n✬ BẮT ĐẦU TẢI & SAO CHÉP (Chế độ: Online, {copy_mode}) ✬\n")
-                
-                temp_source_dir = "temp_online_source"
-                if os.path.exists(temp_source_dir): shutil.rmtree(temp_source_dir)
-                os.makedirs(temp_source_dir)
+                if self.download_only_var.get():
+                    # Chế độ chỉ download vào thư mục source
+                    self._log(f"\n✬ BẮT ĐẦU TẢI VỀ THƯ MỤC 'source' ✬\n")
+                    projects_to_process = [self.online_projects[i] for i in selected_indices]
+                    self._download_projects_to_source(projects_to_process)
+                    self._log("\n✔ Tải về hoàn tất. Chuyển sang chế độ Local.\n")
+                    self.source_mode_var.set("Local")
+                    self.populate_checkboxes()
+                    return # Kết thúc sớm vì chỉ download
+                else:
+                    # Chế độ online bình thường (tải vào temp và mã hóa)
+                    projects_to_process = [self.online_projects[i] for i in selected_indices]
+                    self._log(f"\n✬ BẮT ĐẦU TẢI & SAO CHÉP (Chế độ: Online, {copy_mode}) ✬\n")
+                    
+                    temp_source_dir = "temp_online_source"
+                    if os.path.exists(temp_source_dir): shutil.rmtree(temp_source_dir)
+                    os.makedirs(temp_source_dir)
 
-                total_projects_count = len(projects_to_process)
+                    total_projects_count = len(projects_to_process)
 
-                for idx, project in enumerate(projects_to_process):
-                    title = project.get('title', 'Không tên')
-                    original_folder = project.get('original_folder')
-                    files_to_download = project.get('files', [])
-                    project_total_size = project.get('total_size', 0)
+                    for idx, project in enumerate(projects_to_process):
+                        title = project.get('title', 'Không tên')
+                        original_folder = project.get('original_folder')
+                        files_to_download = project.get('files', [])
+                        project_total_size = project.get('total_size', 0)
 
-                    formatted_size = self._format_size(project_total_size)
-                    self._log(f"\n--- [{idx+1}/{total_projects_count}] Đang tải: {title} ({formatted_size}) ---\n")
+                        formatted_size = self._format_size(project_total_size)
+                        self._log(f"\n--- [{idx+1}/{total_projects_count}] Đang tải: {title} ({formatted_size}) ---\n")
 
-                    if not original_folder or not files_to_download:
-                        self._log(f"Lỗi: '{title}' thiếu thông tin. Bỏ qua.\n")
-                        failure_count += 1
-                        continue
+                        if not original_folder or not files_to_download:
+                            self._log(f"Lỗi: '{title}' thiếu thông tin. Bỏ qua.\n")
+                            failure_count += 1
+                            continue
 
-                    project_bytes_downloaded = 0
-                    has_download_error = False
-                    progress_lock = threading.Lock()
-                    project_temp_dir = os.path.join(temp_source_dir, original_folder)
-                    os.makedirs(project_temp_dir, exist_ok=True)
+                        project_bytes_downloaded = 0
+                        has_download_error = False
+                        progress_lock = threading.Lock()
+                        project_temp_dir = os.path.join(temp_source_dir, original_folder)
+                        os.makedirs(project_temp_dir, exist_ok=True)
 
-                    def _download_worker(file_info):
-                        nonlocal project_bytes_downloaded, has_download_error
-                        if has_download_error: # Stop downloading if an error occurred in another thread
-                            return
+                        def _download_worker(file_info):
+                            nonlocal project_bytes_downloaded, has_download_error
+                            if has_download_error: return
 
-                        file_path = file_info['path']
-                        file_size = file_info['size']
-                        download_url = f"{self.server_base_url}/source/{original_folder}/{file_path}"
-                        local_path = os.path.join(project_temp_dir, file_path.replace('/', os.sep))
-                        os.makedirs(os.path.dirname(local_path), exist_ok=True)
-                        
-                        try:
-                            get_response = requests.get(download_url, timeout=20)
-                            get_response.raise_for_status()
-                            with open(local_path, 'wb') as f: f.write(get_response.content)
+                            file_path = file_info['path']
+                            file_size = file_info['size']
+                            download_url = f"{self.server_base_url}/source/{original_folder}/{file_path}"
+                            local_path = os.path.join(project_temp_dir, file_path.replace('/', os.sep))
+                            os.makedirs(os.path.dirname(local_path), exist_ok=True)
                             
-                            with progress_lock:
-                                project_bytes_downloaded += file_size
-                                if project_total_size > 0:
-                                    percentage = (project_bytes_downloaded / project_total_size) * 100
-                                    self.copy_button_var.set(f"{percentage:.1f}%")
-                                    # self.update_idletasks() # Avoid direct UI update from worker thread
+                            try:
+                                get_response = requests.get(download_url, timeout=20)
+                                get_response.raise_for_status()
+                                with open(local_path, 'wb') as f: f.write(get_response.content)
+                                
+                                with progress_lock:
+                                    project_bytes_downloaded += file_size
+                                    if project_total_size > 0:
+                                        percentage = (project_bytes_downloaded / project_total_size) * 100
+                                        self.copy_button_var.set(f"{percentage:.1f}%")
 
-                        except requests.exceptions.RequestException as e:
-                            self._log(f"   -> Lỗi khi tải {file_path}: {e}\n")
-                            has_download_error = True
+                            except requests.exceptions.RequestException as e:
+                                self._log(f"   -> Lỗi khi tải {file_path}: {e}\n")
+                                has_download_error = True
 
-                    with ThreadPoolExecutor(max_workers=20) as executor:
-                        executor.map(_download_worker, files_to_download)
+                        with ThreadPoolExecutor(max_workers=20) as executor:
+                            executor.map(_download_worker, files_to_download)
 
-                    # Final UI update after all threads are done for this project
-                    if project_total_size > 0 and not has_download_error:
-                        self.copy_button_var.set("100.0%")
+                        if project_total_size > 0 and not has_download_error:
+                            self.copy_button_var.set("100.0%")
 
-                    if has_download_error:
-                        self._log(f"✘ '{title}' có lỗi trong quá trình tải. Bỏ qua sao chép.\n")
-                        failure_count += 1
-                    else:
-                        self._log(f"✔ Tải xong '{title}'. Bắt đầu sao chép...\n")
-                        s, f = self._perform_copy([project], temp_source_dir, root_folder_path)
-                        success_count += s
-                        failure_count += f
+                        if has_download_error:
+                            self._log(f"✘ '{title}' có lỗi trong quá trình tải. Bỏ qua sao chép.\n")
+                            failure_count += 1
+                        else:
+                            self._log(f"✔ Tải xong '{title}'. Bắt đầu sao chép...\n")
+                            s, f = self._perform_copy([project], temp_source_dir, root_folder_path)
+                            success_count += s
+                            failure_count += f
 
-                    try:
-                        shutil.rmtree(project_temp_dir)
-                    except OSError as e:
-                        self._log(f"Lỗi khi dọn dẹp tạm cho '{title}': {e}\n")
+                        try:
+                            shutil.rmtree(project_temp_dir)
+                        except OSError as e:
+                            self._log(f"Lỗi khi dọn dẹp tạm cho '{title}': {e}\n")
 
-                shutil.rmtree(temp_source_dir)
+                    shutil.rmtree(temp_source_dir)
 
             # --- BẢO MẬT CUỐI CÙNG (CHẠY 1 LẦN) ---
             self._log(f"\n--- THỐNG KÊ ---\n✔ Thành công: {success_count}\n✘ Thất bại: {failure_count}\n")
@@ -728,6 +754,74 @@ class App(tk.Tk):
 
         finally:
             self.copy_button_var.set("COPY")
+
+    def _download_projects_to_source(self, projects):
+        """Tải các dự án được chọn trực tiếp vào thư mục 'source'."""
+        success_count = 0
+        failure_count = 0
+        total_projects_count = len(projects)
+
+        for idx, project in enumerate(projects):
+            title = project.get('title', 'Không tên')
+            original_folder = project.get('original_folder')
+            files_to_download = project.get('files', [])
+            project_total_size = project.get('total_size', 0)
+
+            formatted_size = self._format_size(project_total_size)
+            self._log(f"\n--- [{idx+1}/{total_projects_count}] Đang tải: {title} ({formatted_size}) ---\n")
+
+            if not original_folder or not files_to_download:
+                self._log(f"Lỗi: '{title}' thiếu thông tin. Bỏ qua.\n")
+                failure_count += 1
+                continue
+
+            project_bytes_downloaded = 0
+            has_download_error = False
+            progress_lock = threading.Lock()
+            # Tải trực tiếp vào thư mục source
+            project_target_dir = os.path.join("source", original_folder)
+            os.makedirs(project_target_dir, exist_ok=True)
+
+            def _download_worker(file_info):
+                nonlocal project_bytes_downloaded, has_download_error
+                if has_download_error: return
+
+                file_path = file_info['path']
+                file_size = file_info['size']
+                download_url = f"{self.server_base_url}/source/{original_folder}/{file_path}"
+                # Đường dẫn lưu file là trong thư mục source
+                local_path = os.path.join(project_target_dir, file_path.replace('/', os.sep))
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                
+                try:
+                    get_response = requests.get(download_url, timeout=20)
+                    get_response.raise_for_status()
+                    with open(local_path, 'wb') as f: f.write(get_response.content)
+                    
+                    with progress_lock:
+                        project_bytes_downloaded += file_size
+                        if project_total_size > 0:
+                            percentage = (project_bytes_downloaded / project_total_size) * 100
+                            self.copy_button_var.set(f"{percentage:.1f}%")
+
+                except requests.exceptions.RequestException as e:
+                    self._log(f"   -> Lỗi khi tải {file_path}: {e}\n")
+                    has_download_error = True
+
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                executor.map(_download_worker, files_to_download)
+
+            if project_total_size > 0 and not has_download_error:
+                self.copy_button_var.set("100.0%")
+
+            if has_download_error:
+                self._log(f"✘ '{title}' có lỗi trong quá trình tải.\n")
+                failure_count += 1
+            else:
+                self._log(f"✔ Đã tải xong '{title}' vào thư mục source.\n")
+                success_count += 1
+        
+        self._log(f"\n--- KẾT QUẢ TẢI ---\n✔ Thành công: {success_count}\n✘ Thất bại: {failure_count}\n")
 
     def _perform_copy(self, project_list, source_base_dir, root_folder_path):
         copy_mode = self.copy_mode_var.get()

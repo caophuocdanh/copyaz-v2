@@ -7,3 +7,5 @@ pyinstaller --onefile --windowed --icon="icon.ico" --name "CopyAZ" --hidden-impo
 echo pyinstaller --onefile --console --icon="server.ico" --name "CopyAZServer-Console" --hidden-import "win32timezone" CopyAZServer.py
 echo pyinstaller --onefile --noconsole --icon="server.ico" --name "CopyAZServer" --hidden-import "win32timezone" CopyAZServer.py
 copy config.ini dist
+
+"C:\Users\ADMIN\Desktop\copyaz-v2\dist\CopyAZ.exe"
