@@ -1,0 +1,5 @@
+Flask
+pyinstaller
+pywin32
+waitress
+requests

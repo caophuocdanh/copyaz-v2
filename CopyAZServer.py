@@ -4,12 +4,35 @@ import configparser
 from flask import Flask, jsonify, send_from_directory
 import logging
 import sys
+import re
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Define the application's root directory (where the .exe is located)
 APP_ROOT_DIR = os.path.dirname(sys.executable)
+
+# --- Helper function to get HTML title ---
+def get_html_title(project_path, fallback_name):
+    """Tries to find an HTML file and parse its <title> tag."""
+    html_file = os.path.join(project_path, 'index.html')
+    if not os.path.exists(html_file):
+        # If index.html doesn't exist, try to find any other .html file
+        try:
+            html_file = next(f for f in os.listdir(project_path) if f.lower().endswith('.html'))
+            html_file = os.path.join(project_path, html_file)
+        except StopIteration:
+            return fallback_name # No HTML file found
+
+    try:
+        with open(html_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+            title_match = re.search(r'<title>(.*?)</title>', content, re.IGNORECASE | re.DOTALL)
+            if title_match:
+                return title_match.group(1).strip()
+    except (IOError, UnicodeDecodeError):
+        pass # Fallthrough to return fallback_name
+    return fallback_name
 
 # --- Hàm tạo list.json ---
 def create_list_json():
@@ -29,8 +52,13 @@ def create_list_json():
     for project_name in sorted(os.listdir(source_dir)):
         project_path = os.path.join(source_dir, project_name)
         if os.path.isdir(project_path):
+            
+            # Get display title from HTML
+            display_title = get_html_title(project_path, project_name)
+
             project_data = {
-                "title": project_name,
+                "title": display_title,
+                "original_folder": project_name, # Keep original folder name for reference
                 "files": []
             }
             for dirpath, _, filenames in sorted(os.walk(project_path)):
@@ -44,7 +72,7 @@ def create_list_json():
     try:
         with open(list_json_path, 'w', encoding='utf-8') as f:
             json.dump(projects, f, ensure_ascii=False, indent=4)
-        logging.info(f"Tệp list.json đã được tạo/cập nhật thành công tại: {list_json_path}")
+        logging.info(f"Tệp list.json đã được tạo/cập nhật thành công: {list_json_path}")
         return True
     except IOError as e:
         logging.error(f"Lỗi khi tạo/ghi tệp list.json tại {list_json_path}: {e}")
@@ -85,7 +113,7 @@ if __name__ == '__main__':
     
     config = configparser.ConfigParser()
     config.read(os.path.join(APP_ROOT_DIR, 'config.ini'))
-    host = config.get('server', 'host', fallback='127.0.0.1')
+    host = '0.0.0.0' #config.get('server', 'host', fallback='127.0.0.1')
     port = config.getint('server', 'port', fallback=5000)
 
     print(f"Khởi động server (Waitress) tại http://{host}:{port}")
