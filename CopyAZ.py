@@ -281,7 +281,7 @@ class App(tk.Tk):
         self.login_button = tk.Button(top_frame, text="👌", relief="flat", bg="#f0f0f0", fg="black", activebackground="#dcdcdc", activeforeground="black", command=self.login, font=("Segoe UI", 10), cursor="hand2", borderwidth=1, highlightthickness=1)
         self.login_button.pack(side="right", padx=(0, 10), ipady=2, ipadx=8)
 
-        self.password_entry = tk.Entry(top_frame, textvariable=self.password_var, show="●", font=("Segoe UI", 10), width=20, relief="flat", bg="#f0f0f0", highlightthickness=1, highlightbackground="#f0f0f0", highlightcolor="#0078D7", insertbackground="black")
+        self.password_entry = tk.Entry(top_frame, textvariable=self.password_var, show="°", font=("Segoe UI", 10), width=20, relief="flat", bg="#f0f0f0", highlightthickness=1, highlightbackground="#f0f0f0", highlightcolor="#0078D7", insertbackground="black")
         self.password_entry.pack(side="right", padx=(0, 5), ipady=4)
         self.password_entry.bind("<Return>", self.login)
 
@@ -721,7 +721,7 @@ class App(tk.Tk):
                                 self._log(f"   -> Lỗi khi tải {file_path}: {e}\n")
                                 has_download_error = True
 
-                        with ThreadPoolExecutor(max_workers=20) as executor:
+                        with ThreadPoolExecutor(max_workers=16) as executor:
                             executor.map(_download_worker, files_to_download)
 
                         if project_total_size > 0 and not has_download_error:
