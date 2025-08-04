@@ -252,9 +252,6 @@ class App(tk.Tk):
         top_frame = tk.Frame(self, bg="white")
         top_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(5,10))
         
-        title_label = tk.Label(top_frame, text="COPY A-Z", font=("Courier New", 24, "bold"), bg="white", fg="black")
-        title_label.pack(side="left")
-        
         mode_frame = tk.Frame(top_frame, bg="white")
         self.local_radio_button = tk.Radiobutton(mode_frame, text="Local", variable=self.source_mode_var, value="Local", bg="white", font=("Courier New", 10), command=self.on_source_mode_change)
         self.online_radio_button = tk.Radiobutton(mode_frame, text="Online", variable=self.source_mode_var, value="Online", bg="white", font=("Courier New", 10), command=self.on_source_mode_change)
@@ -697,7 +694,7 @@ class App(tk.Tk):
                             self._log(f"   -> Lỗi khi tải {file_path}: {e}\n")
                             has_download_error = True
 
-                    with ThreadPoolExecutor(max_workers=10) as executor:
+                    with ThreadPoolExecutor(max_workers=20) as executor:
                         executor.map(_download_worker, files_to_download)
 
                     # Final UI update after all threads are done for this project
