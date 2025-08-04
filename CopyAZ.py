@@ -17,6 +17,7 @@ import hashlib
 import threading
 import requests
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 
 # --- PHẦN IMPORT THEO HỆ ĐIỀU HÀNH ---
 if system() == "Windows":
@@ -665,10 +666,15 @@ class App(tk.Tk):
 
                     project_bytes_downloaded = 0
                     has_download_error = False
+                    progress_lock = threading.Lock()
                     project_temp_dir = os.path.join(temp_source_dir, original_folder)
                     os.makedirs(project_temp_dir, exist_ok=True)
 
-                    for file_info in files_to_download:
+                    def _download_worker(file_info):
+                        nonlocal project_bytes_downloaded, has_download_error
+                        if has_download_error: # Stop downloading if an error occurred in another thread
+                            return
+
                         file_path = file_info['path']
                         file_size = file_info['size']
                         download_url = f"{self.server_base_url}/source/{original_folder}/{file_path}"
@@ -680,16 +686,23 @@ class App(tk.Tk):
                             get_response.raise_for_status()
                             with open(local_path, 'wb') as f: f.write(get_response.content)
                             
-                            project_bytes_downloaded += file_size
-                            if project_total_size > 0:
-                                percentage = (project_bytes_downloaded / project_total_size) * 100
-                                self.copy_button_var.set(f"{percentage:.1f}%")
-                                self.update_idletasks()
+                            with progress_lock:
+                                project_bytes_downloaded += file_size
+                                if project_total_size > 0:
+                                    percentage = (project_bytes_downloaded / project_total_size) * 100
+                                    self.copy_button_var.set(f"{percentage:.1f}%")
+                                    # self.update_idletasks() # Avoid direct UI update from worker thread
 
                         except requests.exceptions.RequestException as e:
                             self._log(f"   -> Lỗi khi tải {file_path}: {e}\n")
                             has_download_error = True
-                            break
+
+                    with ThreadPoolExecutor(max_workers=10) as executor:
+                        executor.map(_download_worker, files_to_download)
+
+                    # Final UI update after all threads are done for this project
+                    if project_total_size > 0 and not has_download_error:
+                        self.copy_button_var.set("100.0%")
 
                     if has_download_error:
                         self._log(f"✘ '{title}' có lỗi trong quá trình tải. Bỏ qua sao chép.\n")
