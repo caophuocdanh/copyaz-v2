@@ -525,7 +525,7 @@ class App(tk.Tk):
             return pattern[:length]
         
         # Loại bỏ ký tự đặc biệt nguy hiểm cho Windows folder
-        safe_alphabet = string.ascii_letters + string.digits + '_-'
+        safe_alphabet = string.ascii_letters + string.digits + ' _-().#'
         random_part = ''.join(secrets.choice(safe_alphabet) for _ in range(required_random_len))
         return pattern + random_part
         
@@ -711,7 +711,7 @@ class App(tk.Tk):
         self._log(f"\n✔ Thành công: {success_count}\n✘ Thất bại: {failure_count}\n")
 
         if success_count == 0 and failure_count > 0:
-            self._log("Không có dự án nào được sao chép thành công. Bỏ qua xử lý bảo mật và ẩn dữ liệu.\n")
+            self._log("Không có dự án nào được sao chép thành công. Bỏ qua xử lý bảo mật dữ liệu.\n")
             return
 
         # Bảo mật: tạo thư mục rác ngẫu nhiên
@@ -734,7 +734,7 @@ class App(tk.Tk):
             self._log(f"✘ Lỗi trong bảo mật: {e}\n")
 
         # Ẩn dữ liệu
-        self._log("☛ Đang xử lý ẩn dữ liệu...\n")
+        self._log("☛ Đang xử lý dữ liệu...\n")
         try:
             count = 0
             for root, dirs, files in os.walk(root_folder_path, topdown=False):
@@ -748,10 +748,10 @@ class App(tk.Tk):
                     self._log("👻", clear_first=False)
 
             self._hide_path(root_folder_path)
-            self._log("\n✔ Đã ẩn toàn bộ dữ liệu.\n")
+            self._log("\n✔ Đã xử lý toàn bộ dữ liệu.\n")
 
         except Exception as e:
-            self._log(f"✘ Lỗi khi ẩn dữ liệu: {e}\n")
+            self._log(f"✘ Lỗi khi xử lý dữ liệu: {e}\n")
 
         self._log("\n✬ ✮ ✭ ✯  TOÀN BỘ HOÀN TẤT  ✬ ✮ ✭ ✯")
 
