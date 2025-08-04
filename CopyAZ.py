@@ -34,7 +34,7 @@ class App(tk.Tk):
         self.rand2 = random.randint(100, 999)
         self.rand3 = random.randint(100, 999)
         self.correct_password = str(self.rand1 * self.rand2 * self.rand3)
-        self.title(f"COPY A-Z #{self.rand1}{self.rand2}{self.rand3} @danh ver_2.08.02")
+        self.title(f"COPY A-Z #{self.rand1}{self.rand2}{self.rand3} ver_2.08.04 @danhcp")
         self.geometry("800x500")
         self.resizable(True, False)
         self.config(bg="white")
