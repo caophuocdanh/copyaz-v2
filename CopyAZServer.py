@@ -123,9 +123,9 @@ if __name__ == '__main__':
     config = configparser.ConfigParser()
     config.read(os.path.join(APP_ROOT_DIR, 'config.ini'))
     host = '0.0.0.0' #config.get('server', 'host', fallback='127.0.0.1')
-    port = config.getint('server', 'port', fallback=5000)
+    port = config.getint('server', 'port', fallback=12345)
 
     print(f"Khởi động server (Waitress) tại http://{host}:{port}")
     
     from waitress import serve
-    serve(app, host=host, port=port, threads=20)
+    serve(app, host=host, port=port, threads=24)

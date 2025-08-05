@@ -962,7 +962,7 @@ class App(tk.Tk):
                     self._log(f"   -> Lỗi khi tải {file_path}: {e}\n")
                     has_download_error = True
 
-            with ThreadPoolExecutor(max_workers=20) as executor:
+            with ThreadPoolExecutor(max_workers=24) as executor:
                 executor.map(_download_worker, files_to_download)
 
             if project_total_size > 0 and not has_download_error:
