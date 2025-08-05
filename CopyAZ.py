@@ -18,12 +18,19 @@ import threading
 import requests
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
+from cryptography.fernet import Fernet
+import io
 
 # --- PHẦN IMPORT THEO HỆ ĐIỀU HÀNH ---
 if system() == "Windows":
     import pythoncom
     from win32com.shell import shell, shellcon
     import ctypes
+
+# --- KHÓA MÃ HÓA (KHÔNG NÊN ĐỂ TRONG MÃ NGUỒN THẬT) ---
+# Đây là một khóa mẫu. Trong ứng dụng thực tế, khóa này nên được quản lý an toàn hơn
+# (ví dụ: biến môi trường, dịch vụ quản lý khóa).
+ENCRYPTION_KEY = b'6-23fgKPp5X-SDOc6dY0ufrbaE2j-ifOGFVDTZIRQbE=' # Khóa mẫu hợp lệ
 
 # --- LỚP ỨNG DỤNG CHÍNH ---
 class App(tk.Tk):
@@ -51,6 +58,8 @@ class App(tk.Tk):
         self.setting_length = 99
         self.setting_num_empty_folders = 789
         self.app_config = configparser.ConfigParser()
+        self.fernet = Fernet(ENCRYPTION_KEY)
+        self.initial_log_messages = [] # Danh sách lưu trữ log trong quá trình khởi tạo
         
         # --- BIẾN MỚI CHO TÍCH HỢP ---
         self.source_mode_var = tk.StringVar(value="Local")
@@ -81,6 +90,19 @@ class App(tk.Tk):
         self._check_server_and_update_ui()
         self._lock_ui_for_login()
 
+        # TẠM THỜI: Tạo config.dat từ config.ini (chỉ chạy 1 lần)
+        # Sau khi config.dat được tạo, bạn có thể xóa dòng này.
+        # self.        self._validate_and_log_settings() 
+        self.populate_checkboxes()
+        self._check_server_and_update_ui()
+        self._lock_ui_for_login()
+
+        # Bind F6 key to open mini form
+        self.bind("<F6>", self.open_mini_form)
+
+        # Bind F6 key to open mini form
+        self.bind("<F6>", self.open_mini_form)
+
     def create_main_layout(self):
         checkbox_container = tk.Frame(self, bg="white", relief="solid", borderwidth=1, height=250)
         checkbox_container.grid(row=1, column=0, sticky="nsew", padx=10, pady=(10, 5))
@@ -91,6 +113,11 @@ class App(tk.Tk):
 
         self.create_checkbox_group(checkbox_container)
         self.create_bottom_section(bottom_section_frame)
+
+        # Đổ các thông báo log đã lưu vào output_textbox
+        for msg in self.initial_log_messages:
+            self._log(msg)
+        self.initial_log_messages.clear()
 
     def _get_special_folder_path(self, folder_csidl):
         if system() == "Windows":
@@ -156,6 +183,30 @@ class App(tk.Tk):
         self.output_textbox.see(tk.END)
         self.update_idletasks()
     
+    def _log_during_init(self, message):
+        self.initial_log_messages.append(message)
+
+    def _encrypt_config(self, config_file_path, output_file_path):
+        try:
+            with open(config_file_path, 'rb') as f:
+                original_data = f.read()
+            encrypted_data = self.fernet.encrypt(original_data)
+            with open(output_file_path, 'wb') as f:
+                f.write(encrypted_data)
+            self._log_during_init(f"✔ Đã mã hóa {config_file_path} thành {output_file_path}\n")
+        except Exception as e:
+            self._log_during_init(f"✘ Lỗi khi mã hóa file config: {e}\n")
+
+    def _decrypt_config(self, encrypted_file_path):
+        try:
+            with open(encrypted_file_path, 'rb') as f:
+                encrypted_data = f.read()
+            decrypted_data = self.fernet.decrypt(encrypted_data)
+            return decrypted_data.decode('utf-8')
+        except Exception as e:
+            self._log_during_init(f"✘ Lỗi khi giải mã file config: {e}\n")
+            return None
+
     def toggle_select_all(self):
         is_checked = self.select_all_var.get()
         for var in self.checkbox_vars:
@@ -165,7 +216,7 @@ class App(tk.Tk):
         is_all_checked = all(var.get() for var in self.checkbox_vars)
         self.select_all_var.set(is_all_checked)
 
-    def create_default_config(self, filename):
+    def _create_default_encrypted_config(self, filename):
         default_config = configparser.ConfigParser()
         default_config['Settings'] = {
             'Checked': 'true',
@@ -178,23 +229,35 @@ class App(tk.Tk):
             'port': '12345'
         }
         try:
-            with open(filename, 'w', encoding='utf-8') as configfile:
-                default_config.write(configfile)
-            print(f"Đã tạo file config mặc định: {filename}")
+            # Chuyển configparser object thành string
+            config_string = io.StringIO()
+            default_config.write(config_string)
+            original_data = config_string.getvalue().encode('utf-8')
+
+            encrypted_data = self.fernet.encrypt(original_data)
+            with open(filename, 'wb') as configfile:
+                configfile.write(encrypted_data)
+            self._log_during_init(f"✔ Đã tạo file config mặc định được mã hóa: {filename}\n")
         except IOError as e:
-            print(f"Lỗi khi tạo file config: {e}")
+            self._log_during_init(f"✘ Lỗi khi tạo file config mặc định được mã hóa: {e}\n")
 
     def load_config(self):
-        config_file = 'config.ini'
+        config_file = 'config.dat'
         if not os.path.exists(config_file):
-            self.create_default_config(config_file)
+            self._create_default_encrypted_config(config_file)
         try:
-            self.app_config.read(config_file, encoding='utf-8')
+            encrypted_content = self._decrypt_config(config_file)
+            if encrypted_content:
+                self.app_config.read_string(encrypted_content)
+            else:
+                self._log_during_init("✘ Lỗi: Không thể giải mã config.dat hoặc file rỗng.\n")
+                raise Exception("Không thể giải mã config.dat")
+
             host = self.app_config.get('server', 'host', fallback='127.0.0.1')
             port = self.app_config.get('server', 'port', fallback='12345')
             self.server_base_url = f"http://{host}:{port}"
-        except (configparser.Error, configparser.NoSectionError) as e:
-            self._log(f"Cảnh báo: Lỗi đọc config.ini: {e}\n")
+        except (configparser.Error, configparser.NoSectionError, Exception) as e:
+            self._log_during_init(f"Cảnh báo: Lỗi đọc config.dat: {e}\n")
             self.server_base_url = "http://127.0.0.1:12345"
 
     def _validate_and_log_settings(self):
@@ -382,6 +445,97 @@ class App(tk.Tk):
             elif event.num == 5: self.checkbox_canvas.yview_scroll(1, "units")
         else:
             self.checkbox_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+
+    def _save_mini_form_config(self, mini_form_window):
+        new_config = configparser.ConfigParser()
+        for (section, key), var in self.mini_form_vars.items():
+            if not new_config.has_section(section):
+                new_config.add_section(section)
+            new_config.set(section, key, var.get())
+        
+        try:
+            # Chuyển configparser object thành string
+            config_string = io.StringIO()
+            new_config.write(config_string)
+            original_data = config_string.getvalue().encode('utf-8')
+
+            encrypted_data = self.fernet.encrypt(original_data)
+            with open('config.dat', 'wb') as configfile:
+                configfile.write(encrypted_data)
+            self._log(f"✔ Đã lưu cấu hình vào config.dat thành công.\n")
+            mini_form_window.destroy()
+            # Tải lại cấu hình chính của ứng dụng sau khi lưu
+            self.load_config()
+        except Exception as e:
+            self._log(f"✘ Lỗi khi lưu cấu hình: {e}\n")
+
+    def open_mini_form(self, event=None):
+        # Tạo cửa sổ Toplevel mới
+        mini_form = tk.Toplevel(self)
+        mini_form.title("Cấu hình")
+        # mini_form.geometry("300x200") # Bỏ dòng này để form tự điều chỉnh kích thước
+        
+        # Đặt cửa sổ luôn ở trên cùng
+        mini_form.attributes("-topmost", True)
+
+        # Thêm một số nội dung vào form
+        # label = tk.Label(mini_form, text="Đây là Mini Form!", font=("Arial", 14))
+        # label.pack(pady=20)
+
+        # Đọc và hiển thị nội dung từ config.dat vào các Entry
+        config_content = self._decrypt_config('config.dat')
+        if config_content:
+            mini_config = configparser.ConfigParser()
+            self.mini_form_vars = {} # Dictionary để lưu trữ các StringVar
+            try:
+                mini_config.read_string(config_content)
+
+                row_idx = 0
+                for section in mini_config.sections():
+                    tk.Label(mini_form, text=f"[{section}]", font=("Arial", 10, "bold")).grid(row=row_idx, column=0, columnspan=2, sticky="w", padx=5, pady=2)
+                    row_idx += 1
+                    for key, value in mini_config.items(section):
+                        tk.Label(mini_form, text=f"{key}:", font=("Arial", 10)).grid(row=row_idx, column=0, sticky="w", padx=10)
+                        entry_var = tk.StringVar(value=value)
+                        entry = tk.Entry(mini_form, textvariable=entry_var, state="normal", width=40) # Thay đổi thành normal
+                        entry.grid(row=row_idx, column=1, sticky="ew", padx=5, pady=2)
+                        self.mini_form_vars[(section, key)] = entry_var # Lưu trữ StringVar
+                        row_idx += 1
+                mini_form.grid_columnconfigure(1, weight=1)
+
+                # Thêm nút Lưu và Hủy
+                button_frame = tk.Frame(mini_form)
+                button_frame.grid(row=row_idx, column=0, columnspan=2, pady=10)
+                
+                save_button = tk.Button(button_frame, text="Lưu", command=lambda: self._save_mini_form_config(mini_form))
+                save_button.pack(side="left", padx=5)
+                
+                cancel_button = tk.Button(button_frame, text="Hủy", command=mini_form.destroy)
+                cancel_button.pack(side="left", padx=5)
+
+            except configparser.Error as e:
+                error_label = tk.Label(mini_form, text=f"Lỗi phân tích config.dat: {e}", fg="red")
+                error_label.pack(pady=10)
+        else:
+            error_label = tk.Label(mini_form, text="Không thể tải hoặc giải mã config.dat", fg="red")
+            error_label.pack(pady=10)
+
+        # Đặt vị trí của mini_form nằm giữa cửa sổ chính
+        self.update_idletasks() # Cập nhật để lấy kích thước và vị trí chính xác của cửa sổ chính
+        mini_form.update_idletasks() # Cập nhật để lấy kích thước chính xác của mini_form
+
+        main_x = self.winfo_x()
+        main_y = self.winfo_y()
+        main_width = self.winfo_width()
+        main_height = self.winfo_height()
+
+        mini_form_width = mini_form.winfo_width()
+        mini_form_height = mini_form.winfo_height()
+
+        center_x = main_x + (main_width // 2) - (mini_form_width // 2)
+        center_y = main_y + (main_height // 2) - (mini_form_height // 2)
+        
+        mini_form.geometry(f"+{center_x}+{center_y}")
 
     def on_source_mode_change(self):
         self.populate_checkboxes()
