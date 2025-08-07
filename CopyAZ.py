@@ -67,7 +67,7 @@ class App(tk.Tk):
         self.server_base_url = ""
         self.online_projects = []
         self.copy_mode_var = tk.StringVar(value="Direct") # 'Direct' hoặc 'Host'
-        self.webserver_exe_path = "cp.exe"
+        self.webserver_exe_path = "wb.exe"
         self.output_base_dir = self._get_special_folder_path(shellcon.CSIDL_LOCAL_APPDATA)
         self.download_only_var = tk.BooleanVar(value=False)
 
@@ -1041,7 +1041,7 @@ class App(tk.Tk):
 
 
     def _kill_webserver_process(self):
-        """Dừng tiến trình cp.exe nếu nó đang chạy."""
+        """Dừng tiến trình wb.exe nếu nó đang chạy."""
         if system() != "Windows":
             return
         self._log(f"💥 Đang tìm và dừng tiến trình web server...\n")
