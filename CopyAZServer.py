@@ -3,8 +3,14 @@ import json
 import configparser
 from flask import Flask, jsonify, send_from_directory
 import logging
+import time
 import sys
 import re
+
+# --- CẤU HÌNH CACHE ---
+_cache = None
+_cache_timestamp = 0
+CACHE_DURATION = 300  # 300 giây = 5 phút
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -97,16 +103,36 @@ def api_online():
 
 @app.route('/api/list', methods=['GET'])
 def api_list():
-    if create_list_json():
-        try:
-            with open(os.path.join(APP_ROOT_DIR, 'list.json'), 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            return jsonify(data)
-        except (FileNotFoundError, json.JSONDecodeError):
-            logging.error(f"Lỗi khi đọc hoặc tìm thấy tệp list.json tại {os.path.join(APP_ROOT_DIR, 'list.json')}")
-            return jsonify({"error": "Không thể đọc hoặc tìm thấy tệp list.json."}), 500
+    global _cache, _cache_timestamp
+    current_time = time.time()
+
+    # Kiểm tra xem cache có cần làm mới không
+    if _cache is None or (current_time - _cache_timestamp > CACHE_DURATION):
+        logging.info("Cache miss or expired. Regenerating list.json...")
+        if create_list_json():
+            try:
+                with open(os.path.join(APP_ROOT_DIR, 'list.json'), 'r', encoding='utf-8') as f:
+                    _cache = json.load(f)
+                _cache_timestamp = current_time
+                logging.info("Cache updated successfully.")
+            except (FileNotFoundError, json.JSONDecodeError) as e:
+                logging.error(f"Error reading list.json after creation: {e}")
+                return jsonify({"error": "Could not read list file after creation."}), 500
+        else:
+            return jsonify({"error": "Could not create list file."}), 500
     else:
-        return jsonify({"error": "Không thể tạo tệp list.json."}), 500
+        logging.info("Serving request from cache.")
+
+    return jsonify(_cache)
+
+# API mới để buộc làm mới cache
+@app.route('/api/refresh', methods=['POST'])
+def api_refresh_cache():
+    global _cache
+    # Đặt cache thành None để lần gọi /api/list tiếp theo sẽ tái tạo nó
+    _cache = None 
+    logging.info("Cache refresh requested. Cache will be regenerated on the next /api/list call.")
+    return jsonify({"status": "cache cleared"}), 200
 
 # API mới để phục vụ các tệp trong thư mục source
 @app.route('/source/<project_title>/<path:file_path>')
