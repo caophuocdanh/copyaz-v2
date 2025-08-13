@@ -20,6 +20,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from cryptography.fernet import Fernet
 import io
+import gdown
 
 # --- PHẦN IMPORT THEO HỆ ĐIỀU HÀNH ---
 if system() == "Windows":
@@ -70,6 +71,10 @@ class App(tk.Tk):
         self.webserver_exe_path = "wb.exe"
         self.output_base_dir = self._get_special_folder_path(shellcon.CSIDL_LOCAL_APPDATA)
         self.download_only_var = tk.BooleanVar(value=False)
+        self.google_id = ""
+        self.mini_form_instance = None
+        self.download_active = False
+
 
         # --- KHỞI TẠO ---
         self.load_config()
@@ -102,6 +107,9 @@ class App(tk.Tk):
 
         # Bind F6 key to open mini form
         self.bind("<F6>", self.open_mini_form)
+
+        # Bind F7 key to download source_temp
+        self.bind("<F7>", self.download_source_temp)
 
     def create_main_layout(self):
         checkbox_container = tk.Frame(self, bg="white", relief="solid", borderwidth=1, height=250)
@@ -225,8 +233,9 @@ class App(tk.Tk):
             'NumEmptyFolders': '789'
         }
         default_config['server'] = {
-            'host': '127.0.0.1',
-            'port': '12345'
+            'host': 'danhcp.dssddns.net',
+            'port': '12345',
+            'google_id': '1GgFyQngjuXwiimqm-uNlMvp9OJWCa_vQ'
         }
         try:
             # Chuyển configparser object thành string
@@ -256,9 +265,45 @@ class App(tk.Tk):
             host = self.app_config.get('server', 'host', fallback='127.0.0.1')
             port = self.app_config.get('server', 'port', fallback='12345')
             self.server_base_url = f"http://{host}:{port}"
+            self.google_id = self.app_config.get('server', 'google_id', fallback='1GgFyQngjuXwiimqm-uNlMvp9OJWCa_vQ')
         except (configparser.Error, configparser.NoSectionError, Exception) as e:
             self._log_during_init(f"Cảnh báo: Lỗi đọc config.dat: {e}\n")
             self.server_base_url = "http://127.0.0.1:12345"
+
+    def download_source_temp(self, event=None):
+        if not self.google_id:
+            self._log("✘ Lỗi: Google ID không được cấu hình. Vui lòng cấu hình trong F6.", clear_first=True)
+            return
+
+        self._log("Đang tải xuống source_temp từ Google Drive\n", clear_first=True)
+        # Run the download in a separate thread to prevent GUI from freezing
+        download_thread = threading.Thread(target=self._execute_download)
+        download_thread.start()
+
+    def _execute_download(self):
+        self.download_active = True
+        status_thread = threading.Thread(target=self._update_download_status)
+        status_thread.daemon = True # Allow the main program to exit even if this thread is still running
+        status_thread.start()
+        try:
+            save_dir = os.path.join(os.getcwd(), "source_temp")
+            os.makedirs(save_dir, exist_ok=True)
+            folder_url = f"https://drive.google.com/drive/folders/{self.google_id}"
+            gdown.download_folder(url=folder_url, output=save_dir, quiet=True, use_cookies=False) # Changed quiet to True
+            self._log(f"\n✔ Đã tải xuống source_temp thành công vào: {save_dir}")
+        except Exception as e:
+            self._log(f"\n✘ Lỗi khi tải xuống source_temp: {e}")
+        finally:
+            self.download_active = False
+
+    def _update_download_status(self):
+        base_message = "Đang tải xuống source_temp từ Google Drive"
+        dots = 0
+        while self.download_active:
+            current_message = base_message + "." * (dots + 1) # Changed to continuously increasing dots
+            self._log(current_message, clear_first=True)
+            dots += 1
+            time.sleep(3) # Changed to 3 seconds
 
     def _validate_and_log_settings(self):
         error_messages = []
@@ -470,17 +515,22 @@ class App(tk.Tk):
             self._log(f"✘ Lỗi khi lưu cấu hình: {e}\n")
 
     def open_mini_form(self, event=None):
-        # Tạo cửa sổ Toplevel mới
+        if self.mini_form_instance and self.mini_form_instance.winfo_exists():
+            self.mini_form_instance.lift()
+            self.mini_form_instance.focus_set()
+            return
+
         mini_form = tk.Toplevel(self)
+        self.mini_form_instance = mini_form # Lưu tham chiếu
+
         mini_form.title("Cấu hình")
-        # mini_form.geometry("300x200") # Bỏ dòng này để form tự điều chỉnh kích thước
-        
-        # Đặt cửa sổ luôn ở trên cùng
         mini_form.attributes("-topmost", True)
 
-        # Thêm một số nội dung vào form
-        # label = tk.Label(mini_form, text="Đây là Mini Form!", font=("Arial", 14))
-        # label.pack(pady=20)
+        # Thêm protocol để xử lý khi đóng form
+        def on_mini_form_close():
+            self.mini_form_instance = None
+            mini_form.destroy()
+        mini_form.protocol("WM_DELETE_WINDOW", on_mini_form_close)
 
         # Đọc và hiển thị nội dung từ config.dat vào các Entry
         config_content = self._decrypt_config('config.dat')
@@ -1227,6 +1277,30 @@ class App(tk.Tk):
             
         self._log(f"\n\n✬ ✮ ✭ ✯    QUÁ TRÌNH DỌN DẸP HOÀN TẤT ✬ ✮ ✭ ✯  ")
 
+    def download_google_drive_folder(self, event=None):
+        # Chạy tác vụ trong một luồng riêng để không làm đơ UI
+        self._run_task_in_thread(self._download_google_drive_folder_task)
+
+    def _download_google_drive_folder_task(self):
+        self._log("", clear_first=True)
+        self._log("☛ Đang tải thư mục từ Google Drive...", clear_first=True)
+        try:
+            folder_id = self.google_id
+            if not folder_id:
+                self._log("✘ Lỗi: Google ID không được cấu hình. Vui lòng cấu hình trong F6.", clear_first=True)
+                return
+
+            save_dir = os.path.join(os.getcwd(), "source_temp")
+            os.makedirs(save_dir, exist_ok=True)
+            
+            folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
+            
+            self._log(f"Đang tải xuống từ: {folder_url} vào {save_dir}", clear_first=True)
+            gdown.download_folder(url=folder_url, output=save_dir, quiet=False, use_cookies=False)
+            
+            self._log("✔ Tải xuống hoàn tất!", clear_first=True)
+        except Exception as e:
+            self._log(f"✘ Lỗi khi tải xuống từ Google Drive: {e}", clear_first=True)
 
 # --- ĐIỂM BẮT ĐẦU CHẠY CHƯƠNG TRÌNH ---
 if __name__ == "__main__":

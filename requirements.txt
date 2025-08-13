@@ -3,3 +3,4 @@ pyinstaller
 pywin32
 waitress
 requests
+gdown
