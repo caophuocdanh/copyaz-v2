@@ -4,3 +4,4 @@ pywin32
 waitress
 requests
 gdown
+py7zr

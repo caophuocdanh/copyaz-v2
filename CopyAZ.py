@@ -21,6 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from cryptography.fernet import Fernet
 import io
 import gdown
+import py7zr
 
 # --- PHẦN IMPORT THEO HỆ ĐIỀU HÀNH ---
 if system() == "Windows":
@@ -291,13 +292,41 @@ class App(tk.Tk):
             folder_url = f"https://drive.google.com/drive/folders/{self.google_id}"
             gdown.download_folder(url=folder_url, output=save_dir, quiet=True, use_cookies=False) # Changed quiet to True
             self._log(f"\n✔ Đã tải xuống source_temp thành công vào: {save_dir}")
+
+            # Extract .7z files
+            source_dir = os.path.join(os.getcwd(), "source")
+            os.makedirs(source_dir, exist_ok=True)
+            
+            seven_zip_files = [f for f in os.listdir(save_dir) if f.endswith(".7z")]
+            if seven_zip_files:
+                self._log("\nĐang giải nén các tệp .7z...")
+                for zip_file in seven_zip_files:
+                    zip_file_path = os.path.join(save_dir, zip_file)
+                    try:
+                        with py7zr.SevenZipFile(zip_file_path, mode='r') as z:
+                            z.extractall(path=source_dir)
+                        self._log(f"\n✔ Đã giải nén {zip_file} thành công vào: {source_dir}")
+                        os.remove(zip_file_path) # Remove the .7z file after successful extraction
+                    except Exception as extract_e:
+                        self._log(f"\n✘ Lỗi khi giải nén {zip_file}: {extract_e}")
+            else:
+                self._log("\nKhông tìm thấy tệp .7z nào để giải nén.")
+            self.populate_checkboxes() # Reload local list
+            self._log("Hoàn thành tải source. Chọn COPY để tiến hành copy dữ liệu.\n")
+
         except Exception as e:
             self._log(f"\n✘ Lỗi khi tải xuống source_temp: {e}")
         finally:
             self.download_active = False
+            if os.path.exists(save_dir):
+                try:
+                    shutil.rmtree(save_dir)
+                    # self._log(f"\n✔ Đã xóa thư mục tạm thời: {save_dir}")
+                except Exception as e:
+                    self._log(f"\n✘ Lỗi khi xóa thư mục tạm thời {save_dir}: {e}")
 
     def _update_download_status(self):
-        base_message = "Đang tải xuống source_temp từ Google Drive"
+        base_message = "Đang tải source từ Google Drive"
         dots = 0
         while self.download_active:
             current_message = base_message + "." * (dots + 1) # Changed to continuously increasing dots
