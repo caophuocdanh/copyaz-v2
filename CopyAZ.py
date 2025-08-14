@@ -106,9 +106,6 @@ class App(tk.Tk):
         # Bind F6 key to open mini form
         self.bind("<F6>", self.open_mini_form)
 
-        # Bind F6 key to open mini form
-        self.bind("<F6>", self.open_mini_form)
-
         # Bind F7 key to download source_temp
         self.bind("<F7>", self.download_source_temp)
 
@@ -569,6 +566,12 @@ class App(tk.Tk):
             try:
                 mini_config.read_string(config_content)
 
+                # Ensure 'server' section and 'google_id' exist
+                if not mini_config.has_section('server'):
+                    mini_config.add_section('server')
+                if not mini_config.has_option('server', 'google_id'):
+                    mini_config.set('server', 'google_id', self.google_id) # Use the value already loaded or default
+
                 row_idx = 0
                 for section in mini_config.sections():
                     tk.Label(mini_form, text=f"[{section}]", font=("Arial", 10, "bold")).grid(row=row_idx, column=0, columnspan=2, sticky="w", padx=5, pady=2)
@@ -576,9 +579,9 @@ class App(tk.Tk):
                     for key, value in mini_config.items(section):
                         tk.Label(mini_form, text=f"{key}:", font=("Arial", 10)).grid(row=row_idx, column=0, sticky="w", padx=10)
                         entry_var = tk.StringVar(value=value)
-                        entry = tk.Entry(mini_form, textvariable=entry_var, state="normal", width=40) # Thay đổi thành normal
+                        entry = tk.Entry(mini_form, textvariable=entry_var, state="normal", width=40)
                         entry.grid(row=row_idx, column=1, sticky="ew", padx=5, pady=2)
-                        self.mini_form_vars[(section, key)] = entry_var # Lưu trữ StringVar
+                        self.mini_form_vars[(section, key)] = entry_var
                         row_idx += 1
                 mini_form.grid_columnconfigure(1, weight=1)
 

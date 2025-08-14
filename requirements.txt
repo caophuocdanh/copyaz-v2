@@ -5,3 +5,4 @@ waitress
 requests
 gdown
 py7zr
+cryptography
