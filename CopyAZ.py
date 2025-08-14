@@ -312,7 +312,7 @@ class App(tk.Tk):
             else:
                 self._log("\nKhông tìm thấy tệp .7z nào để giải nén.")
             self.populate_checkboxes() # Reload local list
-            self._log("Hoàn thành tải source. Chọn COPY để tiến hành copy dữ liệu.\n")
+            self._log("\n✔ Hoàn thành tải source. Chọn COPY để tiến hành copy dữ liệu.\n")
 
         except Exception as e:
             self._log(f"\n✘ Lỗi khi tải xuống source_temp: {e}")
