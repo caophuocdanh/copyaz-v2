@@ -43,7 +43,7 @@ class App(tk.Tk):
         self.rand2 = random.randint(100, 999)
         self.rand3 = random.randint(100, 999)
         self.correct_password = str(self.rand1 * self.rand2 * self.rand3)
-        self.title(f"COPY A-Z #{self.rand1}{self.rand2}{self.rand3} ver_2.08.04 @danhcp")
+        self.title(f"COPYAZ #{self.rand1}{self.rand2}{self.rand3} ver_2.08.14")
         self.geometry("800x500")
         self.resizable(True, False)
         self.config(bg="white")
@@ -76,6 +76,8 @@ class App(tk.Tk):
         self.mini_form_instance = None
         self.download_active = False
 
+        # --- XỬ LÝ ĐÓNG CỬA SỔ CHÍNH ---
+        self.protocol("WM_DELETE_WINDOW", self._on_main_window_closing)
 
         # --- KHỞI TẠO ---
         self.load_config()
@@ -1122,6 +1124,25 @@ class App(tk.Tk):
 
 
 
+    def _kill_existing_app_processes(self):
+        """Dừng tất cả các tiến trình CopyAZ.exe đang chạy."""
+        if system() != "Windows":
+            return
+        self._log(f"💥 Đang tìm và dừng các tiến trình CopyAZ.exe cũ...\n")
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/IM", "CopyAZ.exe"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            self._log(f"✔ Hoàn tất việc dừng các tiến trình cũ.\n")
+        except FileNotFoundError:
+            self._log(f"✘ Lỗi: Không tìm thấy lệnh 'taskkill'.\n")
+        except Exception as e:
+            self._log(f"✘ Lỗi không xác định khi dừng tiến trình: {e}\n")
+
     def _kill_webserver_process(self):
         """Dừng tiến trình wb.exe nếu nó đang chạy."""
         if system() != "Windows":
@@ -1140,6 +1161,11 @@ class App(tk.Tk):
             self._log(f"✘ Lỗi: Không tìm thấy lệnh 'taskkill'.\n")
         except Exception as e:
             self._log(f"✘ Lỗi không xác định khi dừng tiến trình: {e}\n")
+
+    def _on_main_window_closing(self):
+        """Xử lý khi cửa sổ chính đóng: tắt các tiến trình cũ và hủy cửa sổ."""
+        self._kill_existing_app_processes()
+        self.destroy()
 
     def _clear_shortcut_task(self, log_to_gui=True):
         if log_to_gui: self._log("☛  Bắt đầu dọn dẹp shortcut...\n", clear_first=True)
