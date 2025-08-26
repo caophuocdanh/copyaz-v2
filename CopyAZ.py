@@ -43,7 +43,7 @@ class App(tk.Tk):
         self.rand3 = random.randint(100, 999)
         self.correct_password = str(self.rand1 * self.rand2 * self.rand3)
         self.title(f"COPYAZ #{self.rand1}{self.rand2}{self.rand3} ver_2.08.26")
-        self.geometry("820x500")
+        self.geometry("700x500")
         self.resizable(True, False)
         self.config(bg="white")
         self.copy_button_var = tk.StringVar(value="COPY")
@@ -72,6 +72,9 @@ class App(tk.Tk):
         self.active_thread = None
         self.is_closing = False
         self.gdown_process = None
+        self.cancel_current_task = False
+        self.current_task_name = None
+        self.is_logged_in = False
 
         # --- XỬ LÝ ĐÓNG CỬA SỔ CHÍNH ---
         self.protocol("WM_DELETE_WINDOW", self._on_main_window_closing)
@@ -144,6 +147,8 @@ class App(tk.Tk):
         self.clear_shortcut_btn.config(state=state)
         self.clear_source_btn.config(state=state)
         self.select_all_cb.config(state=state)
+        self.login_button.config(state=state)
+        self.password_entry.config(state=state)
         
         # Vô hiệu hóa/Kích hoạt các nút radio
         if self.direct_radio_button: self.direct_radio_button.config(state=state)
@@ -159,10 +164,15 @@ class App(tk.Tk):
             self.after(100, lambda: self._check_thread(thread))
         else:
             self.active_thread = None
+            self.current_task_name = None
+            self.cancel_current_task = False
             if self.is_closing:
                 self.destroy()
             else:
                 self._set_ui_state('normal')
+                if self.is_logged_in:
+                    self.login_button.config(state='disabled')
+                    self.password_entry.config(state='disabled')
 
     def _run_task_in_thread(self, task_function):
         self._set_ui_state('disabled')
@@ -261,21 +271,35 @@ class App(tk.Tk):
             self._log_during_init(f"Cảnh báo: Lỗi đọc config.dat: {e}\n")
 
     def download_source_temp(self, event=None):
+        if not self.is_logged_in:
+            self._log("Bạn cần đăng nhập để sử dụng chức năng này.\n")
+            return
+
+        # Kiểm tra xem có tác vụ nào đang chạy không
+        if self.active_thread and self.active_thread.is_alive():
+            # Nếu tác vụ đang chạy là download, thì hủy nó
+            if self.current_task_name == "download":
+                self._log("☛ Đang gửi yêu cầu hủy tải xuống...\n")
+                self.cancel_current_task = True
+            # Nếu là tác vụ khác, thì thông báo
+            else:
+                self._log(f"Một tác vụ khác ('{self.current_task_name}') đang chạy. Vui lòng đợi.\n")
+            return
+
+        # Nếu không có tác vụ nào chạy, bắt đầu tải xuống
         if not self.google_id:
             self._log("✘ Lỗi: Google ID không được cấu hình. Vui lòng cấu hình trong F6.", clear_first=True)
             return
 
-        self._log("Đang tải xuống source_temp từ Google Drive\n", clear_first=True)
-        # Run the download in a separate thread to prevent GUI from freezing
-        download_thread = threading.Thread(target=self._execute_download)
-        download_thread.start()
+        self.copy_button_var.set("↓")
+        self._log("Đang chuẩn bị tải xuống từ Google Drive...\n", clear_first=True)
+        
+        self.current_task_name = "download"
+        self.cancel_current_task = False
+        self._run_task_in_thread(self._execute_download)
 
     def _execute_download(self):
         self.download_active = True
-        # Xóa status thread cũ vì giờ chúng ta có log trực tiếp
-        # status_thread = threading.Thread(target=self._update_download_status)
-        # status_thread.daemon = True
-        # status_thread.start()
         self._log("", clear_first=True) # Xóa log cũ
         
         save_dir = os.path.join(os.getcwd(), "source_temp")
@@ -288,47 +312,45 @@ class App(tk.Tk):
                 sys.executable, "-m", "gdown",
                 "--folder", self.google_id,
                 "-O", save_dir,
-                # Bỏ "--quiet" để gdown tạo ra log
             ]
             
             creation_flags = subprocess.CREATE_NO_WINDOW if system() == "Windows" else 0
             self.gdown_process = subprocess.Popen(
                 command, 
                 stdout=subprocess.PIPE, 
-                stderr=subprocess.STDOUT, # Gộp stderr vào stdout
+                stderr=subprocess.STDOUT,
                 text=True, 
                 encoding='utf-8',
-                errors='replace', # Thay thế ký tự không hợp lệ
+                errors='replace',
                 creationflags=creation_flags
             )
 
-            # Tạo và bắt đầu luồng đọc output
             reader_thread = threading.Thread(target=self._stream_reader, args=(self.gdown_process.stdout,), daemon=True)
             reader_thread.start()
 
             while self.gdown_process.poll() is None:
-                if self.is_closing:
+                if self.cancel_current_task or self.is_closing:
                     self.gdown_process.terminate()
                     break
                 time.sleep(0.5)
 
-            # Đợi tiến trình kết thúc
             self.gdown_process.wait()
 
+            if self.cancel_current_task:
+                self._log("\n✔ Đã hủy tác vụ tải xuống.\n")
+                return
             if self.is_closing:
-                self._log("\n✘ Đã hủy tải xuống.\n")
+                self._log("\n✘ Đã hủy tải xuống do đóng ứng dụng.\n")
                 return
 
             return_code = self.gdown_process.returncode
-            self.gdown_process = None
-
             if return_code != 0:
                 self._log(f"\n✘ Tải xuống thất bại (mã lỗi: {return_code}). Vui lòng xem log bên trên.\n")
                 return
 
             self._log(f"\n✔ Đã tải xuống source_temp thành công vào: {save_dir}")
 
-            # Giải nén file .7z
+            # ... (phần giải nén giữ nguyên) ...
             os.makedirs(source_dir, exist_ok=True)
             seven_zip_files = [f for f in os.listdir(save_dir) if f.endswith(".7z")]
             if seven_zip_files:
@@ -351,6 +373,7 @@ class App(tk.Tk):
         except Exception as e:
             self._log(f"\n✘ Lỗi trong quá trình tải: {e}")
         finally:
+            self.copy_button_var.set("COPY")
             self.download_active = False
             self.gdown_process = None
             if os.path.exists(save_dir):
@@ -503,7 +526,7 @@ class App(tk.Tk):
         log_container.grid(row=0, column=1, sticky="nsew")
         
         log_scrollbar = tk.Scrollbar(log_container)
-        self.output_textbox = tk.Text(log_container, font=("Courier New", 10), yscrollcommand=log_scrollbar.set, borderwidth=0, highlightthickness=0)
+        self.output_textbox = tk.Text(log_container, font=("Courier New", 10), yscrollcommand=log_scrollbar.set, borderwidth=0, highlightthickness=0, wrap=tk.WORD)
         log_scrollbar.config(command=self.output_textbox.yview)
         
         log_scrollbar.pack(side="right", fill="y")
@@ -518,6 +541,7 @@ class App(tk.Tk):
     def login(self, event=None):
         password = self.password_var.get()
         if password == self.correct_password or password == "357088003900671":
+            self.is_logged_in = True
             self._set_ui_state("normal")
             self.login_button.config(state="disabled")
             self.password_entry.config(state="disabled")
@@ -790,10 +814,40 @@ class App(tk.Tk):
         p = math.pow(1024, i)
         s = round(size_bytes / p, 2)
         return f"{s} {size_name[i]}"
+
+    def _calculate_total_size(self, projects):
+        total_size = 0
+        for project in projects:
+            source_path = os.path.join("source", project['original_folder'])
+            if os.path.isdir(source_path):
+                for dirpath, _, filenames in os.walk(source_path):
+                    for f in filenames:
+                        fp = os.path.join(dirpath, f)
+                        # Đảm bảo file không phải là symbolic link
+                        if not os.path.islink(fp):
+                            total_size += os.path.getsize(fp)
+        return total_size
         
-    def copy_action(self): self._run_task_in_thread(self._copy_task)
-    def clear_shortcut(self): self._run_task_in_thread(self._clear_shortcut_task)
-    def clear_source(self): self._run_task_in_thread(self._clear_source_task)
+    def copy_action(self):
+        if self.active_thread and self.active_thread.is_alive():
+            self._log(f"Một tác vụ khác ('{self.current_task_name}') đang chạy. Vui lòng đợi.\n")
+            return
+        self.current_task_name = "copy"
+        self._run_task_in_thread(self._copy_task)
+
+    def clear_shortcut(self):
+        if self.active_thread and self.active_thread.is_alive():
+            self._log(f"Một tác vụ khác ('{self.current_task_name}') đang chạy. Vui lòng đợi.\n")
+            return
+        self.current_task_name = "clear_shortcut"
+        self._run_task_in_thread(self._clear_shortcut_task)
+
+    def clear_source(self):
+        if self.active_thread and self.active_thread.is_alive():
+            self._log(f"Một tác vụ khác ('{self.current_task_name}') đang chạy. Vui lòng đợi.\n")
+            return
+        self.current_task_name = "clear_source"
+        self._run_task_in_thread(self._clear_source_task)
 
     def _apply_final_security_and_hiding(self, root_folder_path):
         """Áp dụng các bước bảo mật cuối cùng sau khi tất cả các dự án đã được sao chép."""
@@ -874,12 +928,25 @@ class App(tk.Tk):
                 self._log(f"✘ LỖI: Không thể tạo thư mục gốc: {e}\n")
                 return
 
-            # --- XỬ LÝ THEO CHẾ ĐỘ ---
-            success_count = 0
-            failure_count = 0
+            # --- XỬ LÝ SAO CHÉP VỚI TIẾN TRÌNH CHI TIẾT ---
             selected_projects = [self.sub_folders[i] for i in selected_indices]
             self._log(f"\n✬ BẮT ĐẦU SAO CHÉP DỮ LIỆU (Chế độ: {copy_mode}) ✬\n")
-            success_count, failure_count = self._perform_copy(selected_projects, "source", root_folder_path)
+
+            # Bước 1: Tính tổng dung lượng
+            total_size = self._calculate_total_size(selected_projects)
+
+            # Bước 2: Thực hiện sao chép và cập nhật tiến trình
+            bytes_copied = 0
+            success_count = 0
+            failure_count = 0
+
+            for project in selected_projects:
+                result = self._perform_single_copy(project, root_folder_path, total_size, bytes_copied)
+                bytes_copied = result['bytes_copied']
+                if result['success']:
+                    success_count += 1
+                else:
+                    failure_count += 1
 
             # --- BẢO MẬT CUỐI CÙNG (CHẠY 1 LẦN) ---
             self._log(f"\n--- THỐNG KÊ ---\n✔ Thành công: {success_count}\n✘ Thất bại: {failure_count}\n")
@@ -895,66 +962,76 @@ class App(tk.Tk):
 
     
 
-    def _perform_copy(self, project_list, source_base_dir, root_folder_path):
+    def _perform_single_copy(self, project, root_folder_path, total_size, bytes_copied_so_far):
         copy_mode = self.copy_mode_var.get()
         desktop_path = self._get_special_folder_path(shellcon.CSIDL_DESKTOP)
-        if not desktop_path or not os.path.isdir(desktop_path):
-            self._log("⚠ Cảnh báo: Không tìm thấy thư mục Desktop. Sẽ không thể tạo shortcut.\n")
-            desktop_path = None
+        title = project.get('title', 'Không tên')
+        original_folder = project.get('original_folder')
 
-        success_count = 0
-        failure_count = 0
+        if not original_folder:
+            self._log(f"✘ '{title}' thiếu 'original_folder'. Bỏ qua.\n")
+            return {'success': False, 'bytes_copied': bytes_copied_so_far}
 
-        for project in project_list:
-            title = project.get('title', 'Không tên')
-            original_folder = project.get('original_folder')
-
-            if not original_folder:
-                self._log(f"✘ '{title}' thiếu 'original_folder'. Bỏ qua.\n")
-                failure_count += 1
-                continue
-
-            self._log(f"☛ Đang xử lý: {title}\n")
-            try:
-                source_path = os.path.join(source_base_dir, original_folder)
-                source_html = next((f for f in os.listdir(source_path) if f.lower().endswith('.html')), None)
-
-                if not source_html:
-                    self._log(f"✘ '{original_folder}' không đúng cấu trúc.\n")
-                    failure_count += 1
-                    continue
-
-                md5_hash = hashlib.md5(original_folder.encode('utf-8')).hexdigest()
-                final_path = root_folder_path
-                for char in md5_hash[:16]:
-                    final_path = os.path.join(final_path, char)
-
-                shutil.copytree(source_path, final_path, dirs_exist_ok=True)
-
-                if copy_mode == 'Host':
-                    shutil.copy2(self.webserver_exe_path, final_path)
-
-                new_html_name = f"{md5_hash}.html"
-                os.rename(os.path.join(final_path, source_html),
-                          os.path.join(final_path, new_html_name))
-
-                if desktop_path and system() == "Windows":
-                    shortcut_target = (
-                        os.path.join(final_path, self.webserver_exe_path)
-                        if copy_mode == "Host"
-                        else os.path.join(final_path, new_html_name)
-                    )
-                    shortcut_path = os.path.join(desktop_path, f"{title}.lnk")
-                    self._create_shortcut_properly(shortcut_target, shortcut_path, final_path)
-                    self._log(f"✔ Đã tạo shortcut: {title}.lnk\n")
-                
-                success_count += 1
-
-            except Exception as e:
-                self._log(f"✘ Lỗi khi xử lý '{title}': {e}\n")
-                failure_count += 1
+        self._log(f"☛ Đang xử lý: {title}\n")
+        source_path = os.path.join("source", original_folder)
         
-        return success_count, failure_count
+        try:
+            #Xác định cấu trúc đích
+            md5_hash = hashlib.md5(original_folder.encode('utf-8')).hexdigest()
+            final_path = root_folder_path
+            for char in md5_hash[:16]:
+                final_path = os.path.join(final_path, char)
+            os.makedirs(final_path, exist_ok=True)
+
+            # Sao chép file và cập nhật tiến trình
+            for dirpath, dirnames, filenames in os.walk(source_path):
+                # Tạo thư mục tương ứng trong đích
+                relative_dir = os.path.relpath(dirpath, source_path)
+                dest_dir = os.path.join(final_path, relative_dir) if relative_dir != '.' else final_path
+                for dirname in dirnames:
+                    os.makedirs(os.path.join(dest_dir, dirname), exist_ok=True)
+
+                # Sao chép file
+                for filename in filenames:
+                    src_file = os.path.join(dirpath, filename)
+                    dst_file = os.path.join(dest_dir, filename)
+                    
+                    if not os.path.islink(src_file):
+                        shutil.copy2(src_file, dst_file)
+                        bytes_copied_so_far += os.path.getsize(dst_file)
+                        
+                        percentage = (bytes_copied_so_far / total_size) * 100 if total_size > 0 else 100
+                        self.copy_button_var.set(f"{percentage:.1f}%")
+                        self.update_idletasks()
+
+            # Xử lý sau khi sao chép xong
+            source_html = next((f for f in os.listdir(final_path) if f.lower().endswith('.html')), None)
+            if not source_html:
+                self._log(f"✘ '{original_folder}' không đúng cấu trúc (thiếu file .html).\n")
+                return {'success': False, 'bytes_copied': bytes_copied_so_far}
+
+            if copy_mode == 'Host':
+                shutil.copy2(self.webserver_exe_path, final_path)
+
+            new_html_name = f"{md5_hash}.html"
+            os.rename(os.path.join(final_path, source_html),
+                      os.path.join(final_path, new_html_name))
+
+            if desktop_path and system() == "Windows":
+                shortcut_target = (
+                    os.path.join(final_path, self.webserver_exe_path)
+                    if copy_mode == "Host"
+                    else os.path.join(final_path, new_html_name)
+                )
+                shortcut_path = os.path.join(desktop_path, f"{title}.lnk")
+                self._create_shortcut_properly(shortcut_target, shortcut_path, final_path)
+                self._log(f"✔ Đã tạo shortcut: {title}.lnk\n")
+            
+            return {'success': True, 'bytes_copied': bytes_copied_so_far}
+
+        except Exception as e:
+            self._log(f"✘ Lỗi khi xử lý '{title}': {e}\n")
+            return {'success': False, 'bytes_copied': bytes_copied_so_far}
 
 
 
