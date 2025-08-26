@@ -1,6 +1,6 @@
 # --- YÊU CẦU QUAN TRỌNG ---
-# Cần cài đặt thư viện pywin32 và requests trước khi chạy:
-# pip install pywin32 requests
+# Cần cài đặt thư viện pywin32 trước khi chạy:
+# pip install pywin32
 
 import tkinter as tk
 import time
@@ -15,9 +15,8 @@ from datetime import datetime
 import shutil
 import hashlib
 import threading
-import requests
+import sys
 import subprocess
-from concurrent.futures import ThreadPoolExecutor
 from cryptography.fernet import Fernet
 import io
 import gdown
@@ -43,8 +42,8 @@ class App(tk.Tk):
         self.rand2 = random.randint(100, 999)
         self.rand3 = random.randint(100, 999)
         self.correct_password = str(self.rand1 * self.rand2 * self.rand3)
-        self.title(f"COPYAZ #{self.rand1}{self.rand2}{self.rand3} ver_2.08.14")
-        self.geometry("800x500")
+        self.title(f"COPYAZ #{self.rand1}{self.rand2}{self.rand3} ver_2.08.26")
+        self.geometry("820x500")
         self.resizable(True, False)
         self.config(bg="white")
         self.copy_button_var = tk.StringVar(value="COPY")
@@ -64,17 +63,15 @@ class App(tk.Tk):
         self.initial_log_messages = [] # Danh sách lưu trữ log trong quá trình khởi tạo
         
         # --- BIẾN MỚI CHO TÍCH HỢP ---
-        self.source_mode_var = tk.StringVar(value="Local")
-        self.online_radio_button = None
-        self.server_base_url = ""
-        self.online_projects = []
         self.copy_mode_var = tk.StringVar(value="Direct") # 'Direct' hoặc 'Host'
         self.webserver_exe_path = "wb.exe"
         self.output_base_dir = self._get_special_folder_path(shellcon.CSIDL_LOCAL_APPDATA)
-        self.download_only_var = tk.BooleanVar(value=False)
         self.google_id = ""
         self.mini_form_instance = None
         self.download_active = False
+        self.active_thread = None
+        self.is_closing = False
+        self.gdown_process = None
 
         # --- XỬ LÝ ĐÓNG CỬA SỔ CHÍNH ---
         self.protocol("WM_DELETE_WINDOW", self._on_main_window_closing)
@@ -95,14 +92,12 @@ class App(tk.Tk):
         # --- HOÀN TẤT KHỞI TẠO ---
         self._validate_and_log_settings() 
         self.populate_checkboxes()
-        self._check_server_and_update_ui()
         self._lock_ui_for_login()
 
         # TẠM THỜI: Tạo config.dat từ config.ini (chỉ chạy 1 lần)
         # Sau khi config.dat được tạo, bạn có thể xóa dòng này.
         # self.        self._validate_and_log_settings() 
         self.populate_checkboxes()
-        self._check_server_and_update_ui()
         self._lock_ui_for_login()
 
         # Bind F6 key to open mini form
@@ -151,24 +146,11 @@ class App(tk.Tk):
         self.select_all_cb.config(state=state)
         
         # Vô hiệu hóa/Kích hoạt các nút radio
-        if self.local_radio_button: self.local_radio_button.config(state=state)
-        if self.online_radio_button: self.online_radio_button.config(state=state)
         if self.direct_radio_button: self.direct_radio_button.config(state=state)
         if self.host_radio_button: self.host_radio_button.config(state=state)
 
         for widget in self.scrollable_frame.winfo_children():
             widget.config(state=state)
-
-        # Xử lý riêng cho checkbox "Download"
-        if hasattr(self, 'download_only_cb'):
-            if state == 'disabled':
-                self.download_only_cb.config(state='disabled')
-            else: # state == 'normal'
-                if self.source_mode_var.get() == 'Online':
-                    self.download_only_cb.config(state='normal')
-                else:
-                    self.download_only_cb.config(state='disabled')
-                    self.download_only_var.set(False)
 
         self.update_idletasks()
 
@@ -176,13 +158,17 @@ class App(tk.Tk):
         if thread.is_alive():
             self.after(100, lambda: self._check_thread(thread))
         else:
-            self._set_ui_state('normal')
+            self.active_thread = None
+            if self.is_closing:
+                self.destroy()
+            else:
+                self._set_ui_state('normal')
 
     def _run_task_in_thread(self, task_function):
         self._set_ui_state('disabled')
-        task_thread = threading.Thread(target=task_function, daemon=True)
-        task_thread.start()
-        self.after(100, lambda: self._check_thread(task_thread))
+        self.active_thread = threading.Thread(target=task_function, daemon=True)
+        self.active_thread.start()
+        self.after(100, lambda: self._check_thread(self.active_thread))
 
     def _log(self, message, clear_first=False):
         if clear_first:
@@ -193,6 +179,16 @@ class App(tk.Tk):
     
     def _log_during_init(self, message):
         self.initial_log_messages.append(message)
+
+    def _stream_reader(self, stream):
+        try:
+            for line in iter(stream.readline, ''):
+                # Lên lịch cập nhật log trên luồng chính
+                self.after(0, self._log, line)
+            stream.close()
+        except Exception:
+            # Bỏ qua lỗi có thể xảy ra khi stream bị đóng đột ngột
+            pass
 
     def _encrypt_config(self, config_file_path, output_file_path):
         try:
@@ -233,8 +229,6 @@ class App(tk.Tk):
             'NumEmptyFolders': '789'
         }
         default_config['server'] = {
-            'host': 'danhcp.dssddns.net',
-            'port': '12345',
             'google_id': '1GgFyQngjuXwiimqm-uNlMvp9OJWCa_vQ'
         }
         try:
@@ -262,13 +256,9 @@ class App(tk.Tk):
                 self._log_during_init("✘ Lỗi: Không thể giải mã config.dat hoặc file rỗng.\n")
                 raise Exception("Không thể giải mã config.dat")
 
-            host = self.app_config.get('server', 'host', fallback='127.0.0.1')
-            port = self.app_config.get('server', 'port', fallback='12345')
-            self.server_base_url = f"http://{host}:{port}"
             self.google_id = self.app_config.get('server', 'google_id', fallback='1GgFyQngjuXwiimqm-uNlMvp9OJWCa_vQ')
         except (configparser.Error, configparser.NoSectionError, Exception) as e:
             self._log_during_init(f"Cảnh báo: Lỗi đọc config.dat: {e}\n")
-            self.server_base_url = "http://127.0.0.1:12345"
 
     def download_source_temp(self, event=None):
         if not self.google_id:
@@ -282,20 +272,64 @@ class App(tk.Tk):
 
     def _execute_download(self):
         self.download_active = True
-        status_thread = threading.Thread(target=self._update_download_status)
-        status_thread.daemon = True # Allow the main program to exit even if this thread is still running
-        status_thread.start()
+        # Xóa status thread cũ vì giờ chúng ta có log trực tiếp
+        # status_thread = threading.Thread(target=self._update_download_status)
+        # status_thread.daemon = True
+        # status_thread.start()
+        self._log("", clear_first=True) # Xóa log cũ
+        
+        save_dir = os.path.join(os.getcwd(), "source_temp")
+        source_dir = os.path.join(os.getcwd(), "source")
+        
         try:
-            save_dir = os.path.join(os.getcwd(), "source_temp")
             os.makedirs(save_dir, exist_ok=True)
-            folder_url = f"https://drive.google.com/drive/folders/{self.google_id}"
-            gdown.download_folder(url=folder_url, output=save_dir, quiet=True, use_cookies=False) # Changed quiet to True
+            
+            command = [
+                sys.executable, "-m", "gdown",
+                "--folder", self.google_id,
+                "-O", save_dir,
+                # Bỏ "--quiet" để gdown tạo ra log
+            ]
+            
+            creation_flags = subprocess.CREATE_NO_WINDOW if system() == "Windows" else 0
+            self.gdown_process = subprocess.Popen(
+                command, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.STDOUT, # Gộp stderr vào stdout
+                text=True, 
+                encoding='utf-8',
+                errors='replace', # Thay thế ký tự không hợp lệ
+                creationflags=creation_flags
+            )
+
+            # Tạo và bắt đầu luồng đọc output
+            reader_thread = threading.Thread(target=self._stream_reader, args=(self.gdown_process.stdout,), daemon=True)
+            reader_thread.start()
+
+            while self.gdown_process.poll() is None:
+                if self.is_closing:
+                    self.gdown_process.terminate()
+                    break
+                time.sleep(0.5)
+
+            # Đợi tiến trình kết thúc
+            self.gdown_process.wait()
+
+            if self.is_closing:
+                self._log("\n✘ Đã hủy tải xuống.\n")
+                return
+
+            return_code = self.gdown_process.returncode
+            self.gdown_process = None
+
+            if return_code != 0:
+                self._log(f"\n✘ Tải xuống thất bại (mã lỗi: {return_code}). Vui lòng xem log bên trên.\n")
+                return
+
             self._log(f"\n✔ Đã tải xuống source_temp thành công vào: {save_dir}")
 
-            # Extract .7z files
-            source_dir = os.path.join(os.getcwd(), "source")
+            # Giải nén file .7z
             os.makedirs(source_dir, exist_ok=True)
-            
             seven_zip_files = [f for f in os.listdir(save_dir) if f.endswith(".7z")]
             if seven_zip_files:
                 self._log("\nĐang giải nén các tệp .7z...")
@@ -305,22 +339,23 @@ class App(tk.Tk):
                         with py7zr.SevenZipFile(zip_file_path, mode='r') as z:
                             z.extractall(path=source_dir)
                         self._log(f"\n✔ Đã giải nén {zip_file} thành công vào: {source_dir}")
-                        os.remove(zip_file_path) # Remove the .7z file after successful extraction
+                        os.remove(zip_file_path)
                     except Exception as extract_e:
                         self._log(f"\n✘ Lỗi khi giải nén {zip_file}: {extract_e}")
             else:
                 self._log("\nKhông tìm thấy tệp .7z nào để giải nén.")
-            self.populate_checkboxes() # Reload local list
+            
+            self.populate_checkboxes()
             self._log("\n✔ Hoàn thành tải source. Chọn COPY để tiến hành copy dữ liệu.\n")
 
         except Exception as e:
-            self._log(f"\n✘ Lỗi khi tải xuống source_temp: {e}")
+            self._log(f"\n✘ Lỗi trong quá trình tải: {e}")
         finally:
             self.download_active = False
+            self.gdown_process = None
             if os.path.exists(save_dir):
                 try:
                     shutil.rmtree(save_dir)
-                    # self._log(f"\n✔ Đã xóa thư mục tạm thời: {save_dir}")
                 except Exception as e:
                     self._log(f"\n✘ Lỗi khi xóa thư mục tạm thời {save_dir}: {e}")
 
@@ -401,18 +436,8 @@ class App(tk.Tk):
         top_frame = tk.Frame(self, bg="white")
         top_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(5,10))
         
-        mode_frame = tk.Frame(top_frame, bg="white")
-        self.local_radio_button = tk.Radiobutton(mode_frame, text="Local", variable=self.source_mode_var, value="Local", bg="white", font=("Courier New", 10), command=self.on_source_mode_change)
-        self.online_radio_button = tk.Radiobutton(mode_frame, text="Online", variable=self.source_mode_var, value="Online", bg="white", font=("Courier New", 10), command=self.on_source_mode_change)
-        self.local_radio_button.pack(side="left")
-        self.online_radio_button.pack(side="left", padx=5)
-        mode_frame.pack(side="left", padx=20)
-
         self.select_all_cb = tk.Checkbutton(top_frame, text="Select All", variable=self.select_all_var, command=self.toggle_select_all, bg="white", font=("Courier New", 10))
-        self.select_all_cb.pack(side="left", padx=0)
-
-        self.download_only_cb = tk.Checkbutton(top_frame, text="Download", variable=self.download_only_var, bg="white", font=("Courier New", 10))
-        self.download_only_cb.pack(side="left", padx=5)
+        self.select_all_cb.pack(side="left", padx=20)
 
         self.login_button = tk.Button(top_frame, text="👌", relief="flat", bg="#f0f0f0", fg="black", activebackground="#dcdcdc", activeforeground="black", command=self.login, font=("Segoe UI", 10), cursor="hand2", borderwidth=1, highlightthickness=1)
         self.login_button.pack(side="right", padx=(0, 10), ipady=2, ipadx=8)
@@ -456,8 +481,8 @@ class App(tk.Tk):
         copy_mode_frame = tk.Frame(left_column, bg="white")
         copy_mode_frame.pack(side="top", fill='x', pady=5)
 
-        self.direct_radio_button = tk.Radiobutton(copy_mode_frame, text="Direct", variable=self.copy_mode_var, value="Direct", bg="white", font=("Courier New", 9))
-        self.host_radio_button = tk.Radiobutton(copy_mode_frame, text="Host", variable=self.copy_mode_var, value="Host", bg="white", font=("Courier New", 9))
+        self.direct_radio_button = tk.Radiobutton(copy_mode_frame, text="Direct", variable=self.copy_mode_var, value="Direct", bg="white", font=("Courier New", 9), command=self._on_copy_mode_change)
+        self.host_radio_button = tk.Radiobutton(copy_mode_frame, text="Host", variable=self.copy_mode_var, value="Host", bg="white", font=("Courier New", 9), command=self._on_copy_mode_change)
 
         self.direct_radio_button.pack(side="left", expand=True)
         self.host_radio_button.pack(side="left", expand=True)
@@ -505,6 +530,13 @@ class App(tk.Tk):
             else:
                 self._log("✘ Bạn đã nhập sai quá 3 lần. Ứng dụng sẽ thoát.\n")
                 self.after(2000, self.destroy)
+
+    def _on_copy_mode_change(self):
+        mode = self.copy_mode_var.get()
+        if mode == "Direct":
+            self._log("☛ Đang chọn kiểu dữ liệu: Direct (chạy chương trình trực tiếp)\n", clear_first=True)
+        elif mode == "Host":
+            self._log("☛ Đang chọn kiểu dữ liệu: Host (chạy chương trình thông qua localhost)\n", clear_first=True)
 
     def on_frame_configure(self, event):
         self.checkbox_canvas.configure(scrollregion=self.checkbox_canvas.bbox("all"))
@@ -621,21 +653,7 @@ class App(tk.Tk):
         
         mini_form.geometry(f"+{center_x}+{center_y}")
 
-    def on_source_mode_change(self):
-        self.populate_checkboxes()
-        # Cập nhật trạng thái của checkbox "Download" dựa trên chế độ mới
-        self._set_ui_state('normal')
-
-    def _check_server_and_update_ui(self):
-        def check_task():
-            try:
-                response = requests.get(f"{self.server_base_url}/api/online", timeout=3)
-                if not (response.status_code == 200 and response.json() == 1):
-                    self.online_radio_button.config(state="disabled")
-            except requests.exceptions.RequestException:
-                self.online_radio_button.config(state="disabled")
-                self._log("✘ Thông báo: Server offline, không thể chọn chế độ Online.\n")
-        threading.Thread(target=check_task, daemon=True).start()
+    
 
     def get_html_title(self, project_path, fallback_name):
         import re
@@ -680,54 +698,25 @@ class App(tk.Tk):
             widget.destroy()
         self.checkbox_vars.clear()
         self.sub_folders.clear()
-        self.online_projects.clear()
 
-        mode = self.source_mode_var.get()
-
-        if mode == "Local":
-            self._log("Chế độ: Local. Đang tải dữ liệu từ thư mục 'source'\n", clear_first=True)
-            source_dir = "source"
-            if not os.path.exists(source_dir):
-                self.initialize_source_directory(source_dir)
-            try:
-                folder_names = sorted([d for d in os.listdir(source_dir) if os.path.isdir(os.path.join(source_dir, d))])
-                display_data = []
-                for folder_name in folder_names:
-                    project_path = os.path.join(source_dir, folder_name)
-                    title = self.get_html_title(project_path, folder_name)
-                    display_data.append({"title": title, "original_folder": folder_name})
-                
-                self.sub_folders = display_data
-                display_titles = [item['title'] for item in self.sub_folders]
-                self._render_checkboxes(display_titles)
-
-            except OSError as e:
-                self._log(f"Lỗi khi quét thư mục {source_dir}: {e}\n")
-        else: # mode == "Online"
-            self._log("Chế độ: Online. Đang kết nối tới server...\n", clear_first=True)
-            def fetch_data_task():
-                try:
-                    response = requests.get(f"{self.server_base_url}/api/list", timeout=5)
-                    if response.status_code == 200:
-                        self.online_projects = response.json()
-                        if not isinstance(self.online_projects, list) or not self.online_projects:
-                            self._log("Server không có dự án nào.\n")
-                            return
-                        
-                        project_titles = [p.get('title', 'Dự án không tên') for p in self.online_projects]
-                        self.after(0, self._render_checkboxes, project_titles)
-                        self._log(f"Đã tải danh sách {len(project_titles)} dự án từ server.\n")
-                    else:
-                        self._log(f"Lỗi khi lấy danh sách dự án (status: {response.status_code}).\n")
-                except requests.exceptions.RequestException:
-                    self._log("✘ Lỗi kết nối: Không thể kết nối tới server.\n")
-                    self._log("   Server bị mất kết nối, vui lòng kiểm tra lại mạng internet. \n")
-                except json.JSONDecodeError:
-                    self._log("Lỗi: Server trả về dữ liệu không phải JSON.\n")
+        self._log("Chế độ: Local. Đang tải dữ liệu từ thư mục 'source'\n", clear_first=True)
+        source_dir = "source"
+        if not os.path.exists(source_dir):
+            self.initialize_source_directory(source_dir)
+        try:
+            folder_names = sorted([d for d in os.listdir(source_dir) if os.path.isdir(os.path.join(source_dir, d))])
+            display_data = []
+            for folder_name in folder_names:
+                project_path = os.path.join(source_dir, folder_name)
+                title = self.get_html_title(project_path, folder_name)
+                display_data.append({"title": title, "original_folder": folder_name})
             
-            # We don't use the custom thread runner here because we need to enable UI after fetching
-            task_thread = threading.Thread(target=fetch_data_task, daemon=True)
-            task_thread.start()
+            self.sub_folders = display_data
+            display_titles = [item['title'] for item in self.sub_folders]
+            self._render_checkboxes(display_titles)
+
+        except OSError as e:
+            self._log(f"Lỗi khi quét thư mục {source_dir}: {e}\n")
 
     def initialize_source_directory(self, source_dir):
         sample_folder_name = "Cao Phước Danh"
@@ -855,7 +844,6 @@ class App(tk.Tk):
         try:
             self._log("", clear_first=True)
             self.copy_button_var.set("COPY")
-            mode = self.source_mode_var.get()
             copy_mode = self.copy_mode_var.get()
 
             selected_indices = [i for i, var in enumerate(self.checkbox_vars) if var.get()]
@@ -889,97 +877,9 @@ class App(tk.Tk):
             # --- XỬ LÝ THEO CHẾ ĐỘ ---
             success_count = 0
             failure_count = 0
-            if mode == "Local":
-                selected_projects = [self.sub_folders[i] for i in selected_indices]
-                self._log(f"\n✬ BẮT ĐẦU SAO CHÉP DỮ LIỆU (Chế độ: Local, {copy_mode}) ✬\n")
-                success_count, failure_count = self._perform_copy(selected_projects, "source", root_folder_path)
-            else: # mode == "Online"
-                if self.download_only_var.get():
-                    # Chế độ chỉ download vào thư mục source
-                    self._log(f"\n✬ BẮT ĐẦU TẢI VỀ THƯ MỤC 'source' ✬\n")
-                    projects_to_process = [self.online_projects[i] for i in selected_indices]
-                    self._download_projects_to_source(projects_to_process)
-                    self._log("\n✔ Tải về hoàn tất. Chuyển sang chế độ Local.\n")
-                    self.source_mode_var.set("Local")
-                    self.populate_checkboxes()
-                    return # Kết thúc sớm vì chỉ download
-                else:
-                    # Chế độ online bình thường (tải vào temp và mã hóa)
-                    projects_to_process = [self.online_projects[i] for i in selected_indices]
-                    self._log(f"\n✬ BẮT ĐẦU TẢI & SAO CHÉP (Chế độ: Online, {copy_mode}) ✬\n")
-                    
-                    temp_source_dir = "temp_online_source"
-                    if os.path.exists(temp_source_dir): shutil.rmtree(temp_source_dir)
-                    os.makedirs(temp_source_dir)
-
-                    total_projects_count = len(projects_to_process)
-
-                    for idx, project in enumerate(projects_to_process):
-                        title = project.get('title', 'Không tên')
-                        original_folder = project.get('original_folder')
-                        files_to_download = project.get('files', [])
-                        project_total_size = project.get('total_size', 0)
-
-                        formatted_size = self._format_size(project_total_size)
-                        self._log(f"\n--- [{idx+1}/{total_projects_count}] Đang tải: {title} ({formatted_size}) ---\n")
-
-                        if not original_folder or not files_to_download:
-                            self._log(f"Lỗi: '{title}' thiếu thông tin. Bỏ qua.\n")
-                            failure_count += 1
-                            continue
-
-                        project_bytes_downloaded = 0
-                        has_download_error = False
-                        progress_lock = threading.Lock()
-                        project_temp_dir = os.path.join(temp_source_dir, original_folder)
-                        os.makedirs(project_temp_dir, exist_ok=True)
-
-                        def _download_worker(file_info):
-                            nonlocal project_bytes_downloaded, has_download_error
-                            if has_download_error: return
-
-                            file_path = file_info['path']
-                            file_size = file_info['size']
-                            download_url = f"{self.server_base_url}/source/{original_folder}/{file_path}"
-                            local_path = os.path.join(project_temp_dir, file_path.replace('/', os.sep))
-                            os.makedirs(os.path.dirname(local_path), exist_ok=True)
-                            
-                            try:
-                                get_response = requests.get(download_url, timeout=20)
-                                get_response.raise_for_status()
-                                with open(local_path, 'wb') as f: f.write(get_response.content)
-                                
-                                with progress_lock:
-                                    project_bytes_downloaded += file_size
-                                    if project_total_size > 0:
-                                        percentage = (project_bytes_downloaded / project_total_size) * 100
-                                        self.copy_button_var.set(f"{percentage:.1f}%")
-
-                            except requests.exceptions.RequestException as e:
-                                self._log(f"   -> Lỗi khi tải {file_path}: {e}\n")
-                                has_download_error = True
-
-                        with ThreadPoolExecutor(max_workers=8) as executor:
-                            executor.map(_download_worker, files_to_download)
-
-                        if project_total_size > 0 and not has_download_error:
-                            self.copy_button_var.set("100.0%")
-
-                        if has_download_error:
-                            self._log(f"✘ '{title}' có lỗi trong quá trình tải. Bỏ qua sao chép.\n")
-                            failure_count += 1
-                        else:
-                            self._log(f"✔ Tải xong '{title}'. Bắt đầu sao chép...\n")
-                            s, f = self._perform_copy([project], temp_source_dir, root_folder_path)
-                            success_count += s
-                            failure_count += f
-
-                        try:
-                            shutil.rmtree(project_temp_dir)
-                        except OSError as e:
-                            self._log(f"Lỗi khi dọn dẹp tạm cho '{title}': {e}\n")
-
-                    shutil.rmtree(temp_source_dir)
+            selected_projects = [self.sub_folders[i] for i in selected_indices]
+            self._log(f"\n✬ BẮT ĐẦU SAO CHÉP DỮ LIỆU (Chế độ: {copy_mode}) ✬\n")
+            success_count, failure_count = self._perform_copy(selected_projects, "source", root_folder_path)
 
             # --- BẢO MẬT CUỐI CÙNG (CHẠY 1 LẦN) ---
             self._log(f"\n--- THỐNG KÊ ---\n✔ Thành công: {success_count}\n✘ Thất bại: {failure_count}\n")
@@ -993,73 +893,7 @@ class App(tk.Tk):
         finally:
             self.copy_button_var.set("COPY")
 
-    def _download_projects_to_source(self, projects):
-        """Tải các dự án được chọn trực tiếp vào thư mục 'source'."""
-        success_count = 0
-        failure_count = 0
-        total_projects_count = len(projects)
-
-        for idx, project in enumerate(projects):
-            title = project.get('title', 'Không tên')
-            original_folder = project.get('original_folder')
-            files_to_download = project.get('files', [])
-            project_total_size = project.get('total_size', 0)
-
-            formatted_size = self._format_size(project_total_size)
-            self._log(f"\n--- [{idx+1}/{total_projects_count}] Đang tải: {title} ({formatted_size}) ---\n")
-
-            if not original_folder or not files_to_download:
-                self._log(f"Lỗi: '{title}' thiếu thông tin. Bỏ qua.\n")
-                failure_count += 1
-                continue
-
-            project_bytes_downloaded = 0
-            has_download_error = False
-            progress_lock = threading.Lock()
-            # Tải trực tiếp vào thư mục source
-            project_target_dir = os.path.join("source", original_folder)
-            os.makedirs(project_target_dir, exist_ok=True)
-
-            def _download_worker(file_info):
-                nonlocal project_bytes_downloaded, has_download_error
-                if has_download_error: return
-
-                file_path = file_info['path']
-                file_size = file_info['size']
-                download_url = f"{self.server_base_url}/source/{original_folder}/{file_path}"
-                # Đường dẫn lưu file là trong thư mục source
-                local_path = os.path.join(project_target_dir, file_path.replace('/', os.sep))
-                os.makedirs(os.path.dirname(local_path), exist_ok=True)
-                
-                try:
-                    get_response = requests.get(download_url, timeout=20)
-                    get_response.raise_for_status()
-                    with open(local_path, 'wb') as f: f.write(get_response.content)
-                    
-                    with progress_lock:
-                        project_bytes_downloaded += file_size
-                        if project_total_size > 0:
-                            percentage = (project_bytes_downloaded / project_total_size) * 100
-                            self.copy_button_var.set(f"{percentage:.1f}%")
-
-                except requests.exceptions.RequestException as e:
-                    self._log(f"   -> Lỗi khi tải {file_path}: {e}\n")
-                    has_download_error = True
-
-            with ThreadPoolExecutor(max_workers=24) as executor:
-                executor.map(_download_worker, files_to_download)
-
-            if project_total_size > 0 and not has_download_error:
-                self.copy_button_var.set("100.0%")
-
-            if has_download_error:
-                self._log(f"✘ '{title}' có lỗi trong quá trình tải.\n")
-                failure_count += 1
-            else:
-                self._log(f"✔ Đã tải xong '{title}' vào thư mục source.\n")
-                success_count += 1
-        
-        self._log(f"\n--- KẾT QUẢ TẢI ---\n✔ Thành công: {success_count}\n✘ Thất bại: {failure_count}\n")
+    
 
     def _perform_copy(self, project_list, source_base_dir, root_folder_path):
         copy_mode = self.copy_mode_var.get()
@@ -1164,8 +998,13 @@ class App(tk.Tk):
 
     def _on_main_window_closing(self):
         """Xử lý khi cửa sổ chính đóng: tắt các tiến trình cũ và hủy cửa sổ."""
-        self._kill_existing_app_processes()
-        self.destroy()
+        if self.active_thread and self.active_thread.is_alive():
+            self._log("Đang chờ tác vụ nền hoàn tất trước khi thoát...\n")
+            self._set_ui_state('disabled')
+            self.is_closing = True
+        else:
+            self._kill_existing_app_processes()
+            self.destroy()
 
     def _clear_shortcut_task(self, log_to_gui=True):
         if log_to_gui: self._log("☛  Bắt đầu dọn dẹp shortcut...\n", clear_first=True)
@@ -1198,23 +1037,28 @@ class App(tk.Tk):
                 return
 
             if log_to_gui: self._log("\n ☛  Quét Desktop\n")
-            for filename in os.listdir(desktop_path):
-                if not filename.lower().endswith('.lnk'): continue
-                shortcut_path = os.path.join(desktop_path, filename)
-                try:
-                    pythoncom.CoInitialize()
-                    shortcut = pythoncom.CoCreateInstance(shell.CLSID_ShellLink, None, pythoncom.CLSCTX_INPROC_SERVER, shell.IID_IShellLink)
-                    persist_file = shortcut.QueryInterface(pythoncom.IID_IPersistFile)
-                    persist_file.Load(shortcut_path, 0)
-                    target_path, _ = shortcut.GetPath(shell.SLGP_UNCPRIORITY)
-                    pythoncom.CoUninitialize()
-                    
-                    if target_path and any(os.path.normpath(target_path).startswith(os.path.normpath(p)) for p in full_logged_paths):
-                        os.remove(shortcut_path)
-                        if log_to_gui: self._log(f"✔  Đã xóa: {filename}\n")
-                        deleted_count += 1
-                except Exception:
-                    pythoncom.CoUninitialize() 
+            
+            pythoncom.CoInitialize()
+            try:
+                for filename in os.listdir(desktop_path):
+                    if not filename.lower().endswith('.lnk'): continue
+                    shortcut_path = os.path.join(desktop_path, filename)
+                    try:
+                        shortcut = pythoncom.CoCreateInstance(shell.CLSID_ShellLink, None, pythoncom.CLSCTX_INPROC_SERVER, shell.IID_IShellLink)
+                        persist_file = shortcut.QueryInterface(pythoncom.IID_IPersistFile)
+                        persist_file.Load(shortcut_path, 0)
+                        target_path, _ = shortcut.GetPath(shell.SLGP_UNCPRIORITY)
+                        
+                        if target_path and any(os.path.normpath(target_path).startswith(os.path.normpath(p)) for p in full_logged_paths):
+                            os.remove(shortcut_path)
+                            if log_to_gui: self._log(f"✔  Đã xóa: {filename}\n")
+                            deleted_count += 1
+                    except Exception:
+                        # Bỏ qua lỗi cho một shortcut cụ thể và tiếp tục
+                        pass
+            finally:
+                pythoncom.CoUninitialize()
+
             if log_to_gui: self._log(f"\n☛  Đã xóa tổng cộng [{deleted_count}] shortcut.\n")
         except Exception as e:
             if log_to_gui: self._log(f"\n\n✘  LỖI KHÔNG XÁC ĐỊNH: {e}")
