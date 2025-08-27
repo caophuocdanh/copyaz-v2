@@ -21,6 +21,8 @@ from cryptography.fernet import Fernet
 import io
 import gdown
 import py7zr
+import re
+import math
 
 # --- PHẦN IMPORT THEO HỆ ĐIỀU HÀNH ---
 if system() == "Windows":
@@ -680,7 +682,6 @@ class App(tk.Tk):
     
 
     def get_html_title(self, project_path, fallback_name):
-        import re
         html_file = os.path.join(project_path, 'index.html')
         if not os.path.exists(html_file):
             try:
@@ -786,8 +787,9 @@ class App(tk.Tk):
         new_entry = {"timestamp": datetime.now().isoformat(), "source": source_folder, "created_folder": encrypted_folder_name}
         log_data.append(new_entry)
         try:
-            with open(log_file_path, 'w', encoding='utf-8') as f:
-                json.dump(log_data, f, indent=4, ensure_ascii=False)
+            encrypted_data = self.fernet.encrypt(json.dumps(log_data, indent=4, ensure_ascii=False).encode('utf-8'))
+            with open(log_file_path, 'wb') as f:
+                f.write(encrypted_data)
         except IOError as e:
             self._log(f"\n\nLỖI: Không thể ghi vào file pattern.log: {e}")
             
@@ -808,7 +810,6 @@ class App(tk.Tk):
     def _format_size(self, size_bytes):
         if size_bytes == 0:
             return "0B"
-        import math
         size_name = ("B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
         i = int(math.floor(math.log(size_bytes, 1024)))
         p = math.pow(1024, i)
@@ -1102,11 +1103,12 @@ class App(tk.Tk):
                 if log_to_gui: self._log("⚠  Thông báo: Không tìm thấy file log.\n")
                 return
             
-            with open(log_file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                if not content:
+            with open(log_file_path, 'rb') as f:
+                encrypted_content = f.read()
+                if not encrypted_content:
                     if log_to_gui: self._log("⚠  Thông báo: File log rỗng.\n")
                     return
+                content = self.fernet.decrypt(encrypted_content).decode('utf-8')
                 full_logged_paths = {os.path.join(app_data_path, entry['created_folder']) for entry in json.loads(content) if 'created_folder' in entry}
             
             if not full_logged_paths:
@@ -1212,11 +1214,12 @@ class App(tk.Tk):
         folders_to_delete = set()
         num_sources_found = 0
         try:
-            with open(log_file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                if not content:
+            with open(log_file_path, 'rb') as f:
+                encrypted_content = f.read()
+                if not encrypted_content:
                     self._log("\n⚠  File log rỗng.")
                 else:
+                    content = self.fernet.decrypt(encrypted_content).decode('utf-8')
                     log_data = json.loads(content)
                     valid_entries = [entry for entry in log_data if 'created_folder' in entry]
                     num_sources_found = len(valid_entries)
