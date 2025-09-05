@@ -23,6 +23,7 @@ import gdown
 import py7zr
 import re
 import math
+import multiprocessing
 
 # --- PHẦN IMPORT THEO HỆ ĐIỀU HÀNH ---
 if system() == "Windows":
@@ -37,6 +38,19 @@ ENCRYPTION_KEY = b'6-23fgKPp5X-SDOc6dY0ufrbaE2j-ifOGFVDTZIRQbE=' # Khóa mẫu h
 
 # --- LỚP ỨNG DỤNG CHÍNH ---
 class App(tk.Tk):
+    class _Redirector:
+        def __init__(self, app_instance):
+            self.app = app_instance
+
+        def write(self, text):
+            # Lên lịch cập nhật GUI trên luồng chính để tránh xung đột
+            self.app.after(0, self.app._log, text)
+
+        def flush(self):
+            # Không cần làm gì ở đây cho trường hợp này
+            pass
+
+
     def __init__(self):
         super().__init__()
         # --- CẤU HÌNH CỬA SỔ CHÍNH ---
@@ -44,7 +58,7 @@ class App(tk.Tk):
         self.rand2 = random.randint(100, 999)
         self.rand3 = random.randint(100, 999)
         self.correct_password = str(self.rand1 * self.rand2 * self.rand3)
-        self.title(f"COPYAZ #{self.rand1}{self.rand2}{self.rand3} ver_2.08.26")
+        self.title(f"COPYAZ #{self.rand1}{self.rand2}{self.rand3} v2.09.05")
         self.geometry("700x500")
         self.resizable(True, False)
         self.config(bg="white")
@@ -110,6 +124,9 @@ class App(tk.Tk):
 
         # Bind F7 key to download source_temp
         self.bind("<F7>", self.download_source_temp)
+
+        # Tự động focus vào ô password khi khởi động
+        self.password_entry.focus_set()
 
     def create_main_layout(self):
         checkbox_container = tk.Frame(self, bg="white", relief="solid", borderwidth=1, height=250)
@@ -192,15 +209,7 @@ class App(tk.Tk):
     def _log_during_init(self, message):
         self.initial_log_messages.append(message)
 
-    def _stream_reader(self, stream):
-        try:
-            for line in iter(stream.readline, ''):
-                # Lên lịch cập nhật log trên luồng chính
-                self.after(0, self._log, line)
-            stream.close()
-        except Exception:
-            # Bỏ qua lỗi có thể xảy ra khi stream bị đóng đột ngột
-            pass
+    
 
     def _encrypt_config(self, config_file_path, output_file_path):
         try:
@@ -302,57 +311,28 @@ class App(tk.Tk):
 
     def _execute_download(self):
         self.download_active = True
-        self._log("", clear_first=True) # Xóa log cũ
-        
         save_dir = os.path.join(os.getcwd(), "source_temp")
         source_dir = os.path.join(os.getcwd(), "source")
-        
+
+        # Chuyển hướng cả stdout và stderr để bắt toàn bộ log của gdown
+        redirector = self._Redirector(self)
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
+        sys.stdout = redirector
+        sys.stderr = redirector
+
         try:
+            self._log("Bắt đầu tải xuống từ Google Drive...\n", clear_first=True)
             os.makedirs(save_dir, exist_ok=True)
-            
-            command = [
-                sys.executable, "-m", "gdown",
-                "--folder", self.google_id,
-                "-O", save_dir,
-            ]
-            
-            creation_flags = subprocess.CREATE_NO_WINDOW if system() == "Windows" else 0
-            self.gdown_process = subprocess.Popen(
-                command, 
-                stdout=subprocess.PIPE, 
-                stderr=subprocess.STDOUT,
-                text=True, 
-                encoding='utf-8',
-                errors='replace',
-                creationflags=creation_flags
-            )
 
-            reader_thread = threading.Thread(target=self._stream_reader, args=(self.gdown_process.stdout,), daemon=True)
-            reader_thread.start()
+            gdown.download_folder(id=self.google_id, output=save_dir, quiet=False, use_cookies=False)
 
-            while self.gdown_process.poll() is None:
-                if self.cancel_current_task or self.is_closing:
-                    self.gdown_process.terminate()
-                    break
-                time.sleep(0.5)
-
-            self.gdown_process.wait()
-
-            if self.cancel_current_task:
-                self._log("\n✔ Đã hủy tác vụ tải xuống.\n")
-                return
-            if self.is_closing:
-                self._log("\n✘ Đã hủy tải xuống do đóng ứng dụng.\n")
-                return
-
-            return_code = self.gdown_process.returncode
-            if return_code != 0:
-                self._log(f"\n✘ Tải xuống thất bại (mã lỗi: {return_code}). Vui lòng xem log bên trên.\n")
+            if self.cancel_current_task or self.is_closing:
+                self._log("\n✔ Tác vụ đã được yêu cầu hủy (hoặc ứng dụng đang đóng).\n")
                 return
 
             self._log(f"\n✔ Đã tải xuống source_temp thành công vào: {save_dir}")
 
-            # ... (phần giải nén giữ nguyên) ...
             os.makedirs(source_dir, exist_ok=True)
             seven_zip_files = [f for f in os.listdir(save_dir) if f.endswith(".7z")]
             if seven_zip_files:
@@ -375,6 +355,9 @@ class App(tk.Tk):
         except Exception as e:
             self._log(f"\n✘ Lỗi trong quá trình tải: {e}")
         finally:
+            # Khôi phục lại stdout/stderr và các trạng thái khác
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
             self.copy_button_var.set("COPY")
             self.download_active = False
             self.gdown_process = None
@@ -578,25 +561,37 @@ class App(tk.Tk):
             self.checkbox_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
 
     def _save_mini_form_config(self, mini_form_window):
-        new_config = configparser.ConfigParser()
+        config_content = self._decrypt_config('config.dat')
+        full_config = configparser.ConfigParser()
+        if config_content:
+            full_config.read_string(config_content)
+
         for (section, key), var in self.mini_form_vars.items():
-            if not new_config.has_section(section):
-                new_config.add_section(section)
-            new_config.set(section, key, var.get())
-        
+            if not full_config.has_section(section):
+                full_config.add_section(section)
+
+            # Lấy giá trị tùy theo loại biến (BooleanVar cho Checkbutton, StringVar cho Entry)
+            if isinstance(var, tk.BooleanVar):
+                value_to_save = str(var.get()).lower() # Chuyển thành chuỗi "true"/"false"
+            else:
+                value_to_save = var.get()
+            
+            full_config.set(section, key, value_to_save)
+
         try:
-            # Chuyển configparser object thành string
             config_string = io.StringIO()
-            new_config.write(config_string)
+            full_config.write(config_string)
             original_data = config_string.getvalue().encode('utf-8')
 
             encrypted_data = self.fernet.encrypt(original_data)
             with open('config.dat', 'wb') as configfile:
                 configfile.write(encrypted_data)
+            
             self._log(f"✔ Đã lưu cấu hình vào config.dat thành công.\n")
-            mini_form_window.destroy()
-            # Tải lại cấu hình chính của ứng dụng sau khi lưu
             self.load_config()
+            mini_form_window.destroy()
+            self.mini_form_instance = None
+
         except Exception as e:
             self._log(f"✘ Lỗi khi lưu cấu hình: {e}\n")
 
@@ -607,52 +602,59 @@ class App(tk.Tk):
             return
 
         mini_form = tk.Toplevel(self)
-        self.mini_form_instance = mini_form # Lưu tham chiếu
-
+        self.mini_form_instance = mini_form
         mini_form.title("Cấu hình")
         mini_form.attributes("-topmost", True)
 
-        # Thêm protocol để xử lý khi đóng form
         def on_mini_form_close():
             self.mini_form_instance = None
             mini_form.destroy()
         mini_form.protocol("WM_DELETE_WINDOW", on_mini_form_close)
 
-        # Đọc và hiển thị nội dung từ config.dat vào các Entry
         config_content = self._decrypt_config('config.dat')
         if config_content:
             mini_config = configparser.ConfigParser()
-            self.mini_form_vars = {} # Dictionary để lưu trữ các StringVar
+            self.mini_form_vars = {}
             try:
                 mini_config.read_string(config_content)
-
-                # Ensure 'server' section and 'google_id' exist
-                if not mini_config.has_section('server'):
-                    mini_config.add_section('server')
-                if not mini_config.has_option('server', 'google_id'):
-                    mini_config.set('server', 'google_id', self.google_id) # Use the value already loaded or default
-
                 row_idx = 0
-                for section in mini_config.sections():
-                    tk.Label(mini_form, text=f"[{section}]", font=("Arial", 10, "bold")).grid(row=row_idx, column=0, columnspan=2, sticky="w", padx=5, pady=2)
-                    row_idx += 1
-                    for key, value in mini_config.items(section):
-                        tk.Label(mini_form, text=f"{key}:", font=("Arial", 10)).grid(row=row_idx, column=0, sticky="w", padx=10)
-                        entry_var = tk.StringVar(value=value)
-                        entry = tk.Entry(mini_form, textvariable=entry_var, state="normal", width=40)
-                        entry.grid(row=row_idx, column=1, sticky="ew", padx=5, pady=2)
-                        self.mini_form_vars[(section, key)] = entry_var
+
+                # Hiển thị các mục trong [Settings]
+                if mini_config.has_section('Settings'):
+                    for key, value in mini_config.items('Settings'):
+                        tk.Label(mini_form, text=f"{key.capitalize()}:", font=("Arial", 10)).grid(row=row_idx, column=0, sticky="w", padx=10, pady=2)
+                        
+                        if key.lower() == 'checked':
+                            # Tạo Checkbutton cho cài đặt 'checked'
+                            bool_var = tk.BooleanVar(value=mini_config.getboolean('Settings', key))
+                            widget = tk.Checkbutton(mini_form, variable=bool_var, anchor="w")
+                            self.mini_form_vars[('Settings', key)] = bool_var
+                        else:
+                            # Tạo Entry cho các cài đặt khác
+                            str_var = tk.StringVar(value=value)
+                            widget = tk.Entry(mini_form, textvariable=str_var, state="normal", width=50)
+                            self.mini_form_vars[('Settings', key)] = str_var
+                        
+                        widget.grid(row=row_idx, column=1, sticky="ew", padx=5, pady=2)
                         row_idx += 1
+
+                # Hiển thị google_id từ [server]
+                current_google_id = mini_config.get('server', 'google_id', fallback=self.google_id)
+                tk.Label(mini_form, text="Google ID:", font=("Arial", 10)).grid(row=row_idx, column=0, sticky="w", padx=10, pady=2)
+                entry_var = tk.StringVar(value=current_google_id)
+                entry = tk.Entry(mini_form, textvariable=entry_var, state="normal", width=50)
+                entry.grid(row=row_idx, column=1, sticky="ew", padx=5, pady=2)
+                self.mini_form_vars[('server', 'google_id')] = entry_var
+                row_idx += 1
+
                 mini_form.grid_columnconfigure(1, weight=1)
 
-                # Thêm nút Lưu và Hủy
+                # Nút Lưu và Hủy
                 button_frame = tk.Frame(mini_form)
                 button_frame.grid(row=row_idx, column=0, columnspan=2, pady=10)
-                
                 save_button = tk.Button(button_frame, text="Lưu", command=lambda: self._save_mini_form_config(mini_form))
                 save_button.pack(side="left", padx=5)
-                
-                cancel_button = tk.Button(button_frame, text="Hủy", command=mini_form.destroy)
+                cancel_button = tk.Button(button_frame, text="Hủy", command=on_mini_form_close)
                 cancel_button.pack(side="left", padx=5)
 
             except configparser.Error as e:
@@ -662,21 +664,16 @@ class App(tk.Tk):
             error_label = tk.Label(mini_form, text="Không thể tải hoặc giải mã config.dat", fg="red")
             error_label.pack(pady=10)
 
-        # Đặt vị trí của mini_form nằm giữa cửa sổ chính
-        self.update_idletasks() # Cập nhật để lấy kích thước và vị trí chính xác của cửa sổ chính
-        mini_form.update_idletasks() # Cập nhật để lấy kích thước chính xác của mini_form
-
+        self.update_idletasks()
+        mini_form.update_idletasks()
         main_x = self.winfo_x()
         main_y = self.winfo_y()
         main_width = self.winfo_width()
         main_height = self.winfo_height()
-
         mini_form_width = mini_form.winfo_width()
         mini_form_height = mini_form.winfo_height()
-
         center_x = main_x + (main_width // 2) - (mini_form_width // 2)
         center_y = main_y + (main_height // 2) - (mini_form_height // 2)
-        
         mini_form.geometry(f"+{center_x}+{center_y}")
 
     
