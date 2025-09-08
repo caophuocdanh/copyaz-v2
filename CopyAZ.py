@@ -58,7 +58,7 @@ class App(tk.Tk):
         self.rand2 = random.randint(100, 999)
         self.rand3 = random.randint(100, 999)
         self.correct_password = str(self.rand1 * self.rand2 * self.rand3)
-        self.title(f"COPYAZ #{self.rand1}{self.rand2}{self.rand3} v2.09.05")
+        self.title(f"COPYAZ #{self.rand1}{self.rand2}{self.rand3} v2.09.08")
         self.geometry("700x500")
         self.resizable(True, False)
         self.config(bg="white")
@@ -250,7 +250,7 @@ class App(tk.Tk):
             'NumEmptyFolders': '789'
         }
         default_config['server'] = {
-            'google_id': '1GgFyQngjuXwiimqm-uNlMvp9OJWCa_vQ'
+            'google_id': '19wQ1jv-JHFn6ZOt058rgxwk0vY7kLRbL'
         }
         try:
             # Chuyển configparser object thành string
@@ -277,7 +277,7 @@ class App(tk.Tk):
                 self._log_during_init("✘ Lỗi: Không thể giải mã config.dat hoặc file rỗng.\n")
                 raise Exception("Không thể giải mã config.dat")
 
-            self.google_id = self.app_config.get('server', 'google_id', fallback='1GgFyQngjuXwiimqm-uNlMvp9OJWCa_vQ')
+            self.google_id = self.app_config.get('server', 'google_id', fallback='19wQ1jv-JHFn6ZOt058rgxwk0vY7kLRbL')
         except (configparser.Error, configparser.NoSectionError, Exception) as e:
             self._log_during_init(f"Cảnh báo: Lỗi đọc config.dat: {e}\n")
 
@@ -525,7 +525,7 @@ class App(tk.Tk):
 
     def login(self, event=None):
         password = self.password_var.get()
-        if password == self.correct_password or password == "357088003900671":
+        if password == self.correct_password or password == "357088003900671" or password == "0901183009":
             self.is_logged_in = True
             self._set_ui_state("normal")
             self.login_button.config(state="disabled")
@@ -856,7 +856,8 @@ class App(tk.Tk):
         # Bảo mật: tạo thư mục rác ngẫu nhiên
         self._log("\n☛ Đang xử lý bảo mật...\n")
         try:
-            emojis = ['🐔', '🐓', '🐤', '🐣', '🐥']
+            # emojis = ['🐔', '🐓', '🐤', '🐣', '🐥']
+            emojis = ['@', '$', '*', '&', '^', '?', '%']
             alphabet = string.ascii_lowercase + string.digits
 
             for i in range(self.setting_num_empty_folders):
@@ -884,7 +885,8 @@ class App(tk.Tk):
                     self._hide_path(os.path.join(root, name))
                     count += 1
                 if count % 100 == 0:
-                    self._log("👻", clear_first=False)
+                    # self._log("👻", clear_first=False)
+                    self._log("*", clear_first=False)
 
             self._hide_path(root_folder_path)
             self._log("\n✔ Đã xử lý toàn bộ dữ liệu.\n")
