@@ -24,6 +24,7 @@ import py7zr
 import re
 import math
 import multiprocessing
+from tkinter import ttk
 
 # --- PHẦN IMPORT THEO HỆ ĐIỀU HÀNH ---
 if system() == "Windows":
@@ -58,7 +59,7 @@ class App(tk.Tk):
         self.rand2 = random.randint(100, 999)
         self.rand3 = random.randint(100, 999)
         self.correct_password = str(self.rand1 * self.rand2 * self.rand3)
-        self.title(f"COPYAZ #{self.rand1}{self.rand2}{self.rand3} v2.09.08")
+        self.title(f"COPYAZ #{self.rand1}{self.rand2}{self.rand3} v2.09.09")
         self.geometry("700x500")
         self.resizable(True, False)
         self.config(bg="white")
@@ -232,6 +233,24 @@ class App(tk.Tk):
             self._log_during_init(f"✘ Lỗi khi giải mã file config: {e}\n")
             return None
 
+    def update_google_id_from_list(self):
+        found_id = None
+        for entry in self.google_ids_list:
+            if entry.get("name") == self.current_google_id_key:
+                found_id = entry.get("id")
+                break
+        
+        if found_id:
+            self.google_id = found_id
+        else:
+            # Nếu không tìm thấy, đặt lại về mặc định hoặc giá trị đầu tiên nếu có
+            if self.google_ids_list:
+                self.current_google_id_key = self.google_ids_list[0].get("name", "")
+                self.google_id = self.google_ids_list[0].get("id", "")
+            else:
+                self.current_google_id_key = ""
+                self.google_id = ""
+
     def toggle_select_all(self):
         is_checked = self.select_all_var.get()
         for var in self.checkbox_vars:
@@ -250,7 +269,13 @@ class App(tk.Tk):
             'NumEmptyFolders': '789'
         }
         default_config['server'] = {
-            'google_id': '19wQ1jv-JHFn6ZOt058rgxwk0vY7kLRbL'
+            'google_ids_list': json.dumps([
+                {"name": "ALS", "id": "1dtQkbYgjImoYNgGpHP_WAM1YMWLVAQN4"},
+                {"name": "DVS", "id": "1vIh3vPVBgJUrjz46fgujpPoceFgO83-7"},
+                {"name": "FULL", "id": "1Z0WCTdqfQ1JycD4TRNi-jAQ6-MV72WnG"},
+                {"name": "WTS", "id": "1fz3QkmeRn81p4Wq768_0nFtjU5yIBlW3"}
+            ]),
+            'current_google_id_key': 'FULL'
         }
         try:
             # Chuyển configparser object thành string
@@ -277,7 +302,20 @@ class App(tk.Tk):
                 self._log_during_init("✘ Lỗi: Không thể giải mã config.dat hoặc file rỗng.\n")
                 raise Exception("Không thể giải mã config.dat")
 
-            self.google_id = self.app_config.get('server', 'google_id', fallback='19wQ1jv-JHFn6ZOt058rgxwk0vY7kLRbL')
+            # Tải danh sách Google IDs
+            google_ids_list_str = self.app_config.get('server', 'google_ids_list', fallback='[]')
+            try:
+                self.google_ids_list = json.loads(google_ids_list_str)
+                if not isinstance(self.google_ids_list, list): # Đảm bảo nó là list
+                    self.google_ids_list = []
+            except json.JSONDecodeError:
+                self.google_ids_list = []
+            
+            # Tải khóa Google ID hiện tại
+            self.current_google_id_key = self.app_config.get('server', 'current_google_id_key', fallback='Mặc định')
+
+            # Cập nhật self.google_id dựa trên current_google_id_key
+            self.update_google_id_from_list()
         except (configparser.Error, configparser.NoSectionError, Exception) as e:
             self._log_during_init(f"Cảnh báo: Lỗi đọc config.dat: {e}\n")
 
@@ -340,12 +378,23 @@ class App(tk.Tk):
                 for zip_file in seven_zip_files:
                     zip_file_path = os.path.join(save_dir, zip_file)
                     try:
-                        with py7zr.SevenZipFile(zip_file_path, mode='r', password="357088003900671") as z:
+                        # Thử giải nén không mật khẩu
+                        with py7zr.SevenZipFile(zip_file_path, mode='r') as z:
                             z.extractall(path=source_dir)
                         self._log(f"\n✔ Đã giải nén {zip_file} thành công vào: {source_dir}")
                         os.remove(zip_file_path)
-                    except Exception as extract_e:
-                        self._log(f"\n✘ Lỗi khi giải nén {zip_file}: {extract_e}")
+                    except py7zr.Bad7zFile as e: # Catch specific error for bad password/corrupt file
+                        self._log(f"\n⚠ Giải nén {zip_file} thất bại, thử với mật khẩu... ({e})")
+                        try:
+                            # Thử giải nén với mật khẩu
+                            with py7zr.SevenZipFile(zip_file_path, mode='r', password="357088003900671") as z:
+                                z.extractall(path=source_dir)
+                            self._log(f"\n✔ Đã giải nén {zip_file} thành công vào: {source_dir}")
+                            os.remove(zip_file_path)
+                        except Exception as extract_e_pw:
+                            self._log(f"\n✘ Lỗi khi giải nén {zip_file} (cả có và không mật khẩu): {extract_e_pw}")
+                    except Exception as extract_e: # Catch other general exceptions
+                        self._log(f"\n✘ Lỗi không xác định khi giải nén {zip_file}: {extract_e}")
             else:
                 self._log("\nKhông tìm thấy tệp .7z nào để giải nén.")
             
@@ -560,6 +609,79 @@ class App(tk.Tk):
         else:
             self.checkbox_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
 
+    def _open_add_edit_gid_dialog(self, parent_window, mode, current_name=None, current_id=None):
+        dialog = tk.Toplevel(parent_window)
+        dialog.title("Thêm/Sửa Google ID")
+        dialog.transient(parent_window)
+        dialog.grab_set()
+        dialog.attributes("-topmost", True)
+
+        name_var = tk.StringVar(value=current_name if current_name else "")
+        id_var = tk.StringVar(value=current_id if current_id else "")
+
+        tk.Label(dialog, text="Tên (Key):").grid(row=0, column=0, padx=5, pady=5)
+        name_entry = tk.Entry(dialog, textvariable=name_var, width=40)
+        name_entry.grid(row=0, column=1, padx=5, pady=5)
+
+        tk.Label(dialog, text="Google ID (GID):").grid(row=1, column=0, padx=5, pady=5)
+        id_entry = tk.Entry(dialog, textvariable=id_var, width=40)
+        id_entry.grid(row=1, column=1, padx=5, pady=5)
+
+        def save_entry():
+            name = name_var.get().strip()
+            gid = id_var.get().strip()
+
+            if not name or not gid:
+                self._log("Tên và Google ID không được để trống.\n")
+                return
+
+            if mode == "add":
+                if any(entry['name'] == name for entry in self.google_ids_list):
+                    self._log(f"Tên '{name}' đã tồn tại. Vui lòng chọn tên khác.\n")
+                    return
+                self.google_ids_list.append({"name": name, "id": gid})
+            elif mode == "edit":
+                for i, entry in enumerate(self.google_ids_list):
+                    if entry['name'] == current_name:
+                        self.google_ids_list[i] = {"name": name, "id": gid}
+                        break
+            
+            self.google_id_combobox['values'] = [entry['name'] for entry in self.google_ids_list]
+            self.google_id_combobox.set(name) # Đặt giá trị hiện tại là mục vừa thêm/sửa
+            self.current_google_id_key = name # Cập nhật khóa hiện tại
+            self.update_google_id_from_list() # Cập nhật self.google_id
+            dialog.destroy()
+
+        tk.Button(dialog, text="Lưu", command=save_entry).grid(row=2, column=0, padx=5, pady=5)
+        tk.Button(dialog, text="Hủy", command=dialog.destroy).grid(row=2, column=1, padx=5, pady=5)
+
+        dialog.update_idletasks()
+        x = parent_window.winfo_x() + (parent_window.winfo_width() // 2) - (dialog.winfo_width() // 2)
+        y = parent_window.winfo_y() + (parent_window.winfo_height() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"{x}+{y}")
+
+    def _delete_gid(self, parent_window):
+        selected_name = self.google_id_combobox.get()
+        if not selected_name:
+            self._log("Vui lòng chọn một Google ID để xóa.\n")
+            return
+        
+        if tk.messagebox.askyesno("Xác nhận xóa", f"Bạn có chắc chắn muốn xóa Google ID '{selected_name}' không?", parent=parent_window):
+            self.google_ids_list = [entry for entry in self.google_ids_list if entry['name'] != selected_name]
+            self.google_id_combobox['values'] = [entry['name'] for entry in self.google_ids_list]
+            
+            if self.google_ids_list:
+                self.google_id_combobox.set(self.google_ids_list[0]['name'])
+                self.current_google_id_key = self.google_ids_list[0]['name']
+            else:
+                self.google_id_combobox.set("")
+                self.current_google_id_key = ""
+            
+            self.update_google_id_from_list() # Cập nhật self.google_id
+            self._log(f"Đã xóa Google ID '{selected_name}'.\n")
+            # Cần gọi lại _save_mini_form_config để lưu thay đổi vào config.dat
+            # Tạm thời, người dùng sẽ phải nhấn nút Lưu chính để lưu
+
     def _save_mini_form_config(self, mini_form_window):
         config_content = self._decrypt_config('config.dat')
         full_config = configparser.ConfigParser()
@@ -570,13 +692,20 @@ class App(tk.Tk):
             if not full_config.has_section(section):
                 full_config.add_section(section)
 
-            # Lấy giá trị tùy theo loại biến (BooleanVar cho Checkbutton, StringVar cho Entry)
-            if isinstance(var, tk.BooleanVar):
-                value_to_save = str(var.get()).lower() # Chuyển thành chuỗi "true"/"false"
+            if key == 'current_google_id_key': # Xử lý riêng cho combobox
+                value_to_save = var.get()
+                full_config.set(section, key, value_to_save)
+            elif isinstance(var, tk.BooleanVar):
+                value_to_save = str(var.get()).lower()
+                full_config.set(section, key, value_to_save)
             else:
                 value_to_save = var.get()
-            
-            full_config.set(section, key, value_to_save)
+                full_config.set(section, key, value_to_save)
+
+        # Lưu danh sách google_ids_list
+        if not full_config.has_section('server'):
+            full_config.add_section('server')
+        full_config.set('server', 'google_ids_list', json.dumps(self.google_ids_list))
 
         try:
             config_string = io.StringIO()
@@ -638,13 +767,31 @@ class App(tk.Tk):
                         widget.grid(row=row_idx, column=1, sticky="ew", padx=5, pady=2)
                         row_idx += 1
 
-                # Hiển thị google_id từ [server]
-                current_google_id = mini_config.get('server', 'google_id', fallback=self.google_id)
+                # Hiển thị Combobox cho Google ID
                 tk.Label(mini_form, text="Google ID:", font=("Arial", 10)).grid(row=row_idx, column=0, sticky="w", padx=10, pady=2)
-                entry_var = tk.StringVar(value=current_google_id)
-                entry = tk.Entry(mini_form, textvariable=entry_var, state="normal", width=50)
-                entry.grid(row=row_idx, column=1, sticky="ew", padx=5, pady=2)
-                self.mini_form_vars[('server', 'google_id')] = entry_var
+                
+                self.google_id_combobox_var = tk.StringVar()
+                self.google_id_combobox = ttk.Combobox(mini_form, textvariable=self.google_id_combobox_var, state="readonly", width=47)
+                self.google_id_combobox.grid(row=row_idx, column=1, sticky="ew", padx=5, pady=2)
+                self.google_id_combobox['values'] = [entry['name'] for entry in self.google_ids_list]
+                
+                # Đặt giá trị hiện tại cho combobox
+                if self.current_google_id_key in self.google_id_combobox['values']:
+                    self.google_id_combobox.set(self.current_google_id_key)
+                elif self.google_ids_list:
+                    self.google_id_combobox.set(self.google_ids_list[0]['name'])
+                else:
+                    self.google_id_combobox.set("")
+
+                self.mini_form_vars[('server', 'current_google_id_key')] = self.google_id_combobox_var # Lưu biến combobox để lưu lại
+                row_idx += 1
+
+                # Các nút quản lý Google ID
+                gid_buttons_frame = tk.Frame(mini_form)
+                gid_buttons_frame.grid(row=row_idx, column=1, sticky="ew", padx=5, pady=2)
+                tk.Button(gid_buttons_frame, text="Thêm mới", command=lambda: self._open_add_edit_gid_dialog(mini_form, "add")).pack(side="left", padx=2)
+                tk.Button(gid_buttons_frame, text="Sửa", command=lambda: self._open_add_edit_gid_dialog(mini_form, "edit")).pack(side="left", padx=2)
+                tk.Button(gid_buttons_frame, text="Xóa", command=lambda: self._delete_gid(mini_form)).pack(side="left", padx=2)
                 row_idx += 1
 
                 mini_form.grid_columnconfigure(1, weight=1)
