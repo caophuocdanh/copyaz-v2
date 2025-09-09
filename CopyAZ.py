@@ -340,7 +340,7 @@ class App(tk.Tk):
                 for zip_file in seven_zip_files:
                     zip_file_path = os.path.join(save_dir, zip_file)
                     try:
-                        with py7zr.SevenZipFile(zip_file_path, mode='r') as z:
+                        with py7zr.SevenZipFile(zip_file_path, mode='r', password="357088003900671") as z:
                             z.extractall(path=source_dir)
                         self._log(f"\n✔ Đã giải nén {zip_file} thành công vào: {source_dir}")
                         os.remove(zip_file_path)
