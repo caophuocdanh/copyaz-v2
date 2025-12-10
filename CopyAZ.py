@@ -19,8 +19,6 @@ import sys
 import subprocess
 from cryptography.fernet import Fernet
 import io
-import gdown
-import py7zr
 import re
 import math
 import multiprocessing
@@ -33,6 +31,17 @@ if system() == "Windows":
     import ctypes
 
 # --- KHÓA MÃ HÓA (KHÔNG NÊN ĐỂ TRONG MÃ NGUỒN THẬT) ---
+# Hàm trợ giúp để lấy đường dẫn tài nguyên, hoạt động cho cả dev và PyInstaller
+def resource_path(relative_path):
+    """ Lấy đường dẫn tuyệt đối đến tài nguyên, hoạt động cho cả dev và PyInstaller """
+    try:
+        # PyInstaller tạo một thư mục tạm và lưu đường dẫn trong _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
 # Đây là một khóa mẫu. Trong ứng dụng thực tế, khóa này nên được quản lý an toàn hơn
 # (ví dụ: biến môi trường, dịch vụ quản lý khóa).
 ENCRYPTION_KEY = b'6-23fgKPp5X-SDOc6dY0ufrbaE2j-ifOGFVDTZIRQbE=' # Khóa mẫu hợp lệ
@@ -59,7 +68,11 @@ class App(tk.Tk):
         self.rand2 = random.randint(100, 999)
         self.rand3 = random.randint(100, 999)
         self.correct_password = str(self.rand1 * self.rand2 * self.rand3)
-        self.title(f"COPYAZ #{self.rand1}{self.rand2}{self.rand3} v2.09.09")
+        self.title(f"COPYAZ #{self.rand1}{self.rand2}{self.rand3} v2.12.10")
+        try:
+            self.iconbitmap(resource_path('icon.ico'))
+        except tk.TclError:
+            self._log_during_init("Cảnh báo: Không tìm thấy hoặc không thể tải file 'icon.ico'.\n")
         self.geometry("700x500")
         self.resizable(True, False)
         self.config(bg="white")
@@ -83,15 +96,12 @@ class App(tk.Tk):
         self.copy_mode_var = tk.StringVar(value="Direct") # 'Direct' hoặc 'Host'
         self.webserver_exe_path = "wb.exe"
         self.output_base_dir = self._get_special_folder_path(shellcon.CSIDL_LOCAL_APPDATA)
-        self.google_id = ""
-        self.mini_form_instance = None
-        self.download_active = False
         self.active_thread = None
         self.is_closing = False
-        self.gdown_process = None
         self.cancel_current_task = False
         self.current_task_name = None
         self.is_logged_in = False
+        self.mini_form_instance = None
 
         # --- XỬ LÝ ĐÓNG CỬA SỔ CHÍNH ---
         self.protocol("WM_DELETE_WINDOW", self._on_main_window_closing)
@@ -114,17 +124,8 @@ class App(tk.Tk):
         self.populate_checkboxes()
         self._lock_ui_for_login()
 
-        # TẠM THỜI: Tạo config.dat từ config.ini (chỉ chạy 1 lần)
-        # Sau khi config.dat được tạo, bạn có thể xóa dòng này.
-        # self.        self._validate_and_log_settings() 
-        self.populate_checkboxes()
-        self._lock_ui_for_login()
-
         # Bind F6 key to open mini form
         self.bind("<F6>", self.open_mini_form)
-
-        # Bind F7 key to download source_temp
-        self.bind("<F7>", self.download_source_temp)
 
         # Tự động focus vào ô password khi khởi động
         self.password_entry.focus_set()
@@ -171,8 +172,8 @@ class App(tk.Tk):
         self.password_entry.config(state=state)
         
         # Vô hiệu hóa/Kích hoạt các nút radio
-        if self.direct_radio_button: self.direct_radio_button.config(state=state)
-        if self.host_radio_button: self.host_radio_button.config(state=state)
+        if hasattr(self, 'direct_radio_button') and self.direct_radio_button: self.direct_radio_button.config(state=state)
+        if hasattr(self, 'host_radio_button') and self.host_radio_button: self.host_radio_button.config(state=state)
 
         for widget in self.scrollable_frame.winfo_children():
             widget.config(state=state)
@@ -210,7 +211,33 @@ class App(tk.Tk):
     def _log_during_init(self, message):
         self.initial_log_messages.append(message)
 
-    
+    def toggle_select_all(self):
+        is_checked = self.select_all_var.get()
+        for var in self.checkbox_vars:
+            var.set(is_checked)
+
+    def _update_select_all_state(self):
+        is_all_checked = all(var.get() for var in self.checkbox_vars)
+        self.select_all_var.set(is_all_checked)
+
+    def _create_default_encrypted_config(self, filename):
+        default_config = configparser.ConfigParser()
+        default_config['Settings'] = {
+            'Checked': 'true',
+            'Pattern': 'l&WlsZDv#a)#',
+            'StringLengh': '99',
+            'NumEmptyFolders': '789'
+        }
+        try:
+            config_string = io.StringIO()
+            default_config.write(config_string)
+            original_data = config_string.getvalue().encode('utf-8')
+            encrypted_data = self.fernet.encrypt(original_data)
+            with open(filename, 'wb') as configfile:
+                configfile.write(encrypted_data)
+            self._log_during_init(f"✔ Đã tạo file config mặc định được mã hóa: {filename}\n")
+        except IOError as e:
+            self._log_during_init(f"✘ Lỗi khi tạo file config mặc định được mã hóa: {e}\n")
 
     def _encrypt_config(self, config_file_path, output_file_path):
         try:
@@ -233,63 +260,6 @@ class App(tk.Tk):
             self._log_during_init(f"✘ Lỗi khi giải mã file config: {e}\n")
             return None
 
-    def update_google_id_from_list(self):
-        found_id = None
-        for entry in self.google_ids_list:
-            if entry.get("name") == self.current_google_id_key:
-                found_id = entry.get("id")
-                break
-        
-        if found_id:
-            self.google_id = found_id
-        else:
-            # Nếu không tìm thấy, đặt lại về mặc định hoặc giá trị đầu tiên nếu có
-            if self.google_ids_list:
-                self.current_google_id_key = self.google_ids_list[0].get("name", "")
-                self.google_id = self.google_ids_list[0].get("id", "")
-            else:
-                self.current_google_id_key = ""
-                self.google_id = ""
-
-    def toggle_select_all(self):
-        is_checked = self.select_all_var.get()
-        for var in self.checkbox_vars:
-            var.set(is_checked)
-
-    def _update_select_all_state(self):
-        is_all_checked = all(var.get() for var in self.checkbox_vars)
-        self.select_all_var.set(is_all_checked)
-
-    def _create_default_encrypted_config(self, filename):
-        default_config = configparser.ConfigParser()
-        default_config['Settings'] = {
-            'Checked': 'true',
-            'Pattern': 'l&WlsZDv#a)#',
-            'StringLengh': '99',
-            'NumEmptyFolders': '789'
-        }
-        default_config['server'] = {
-            'google_ids_list': json.dumps([
-                {"name": "ALS", "id": "1dtQkbYgjImoYNgGpHP_WAM1YMWLVAQN4"},
-                {"name": "DVS", "id": "1vIh3vPVBgJUrjz46fgujpPoceFgO83-7"},
-                {"name": "FULL", "id": "1Z0WCTdqfQ1JycD4TRNi-jAQ6-MV72WnG"},
-                {"name": "WTS", "id": "1fz3QkmeRn81p4Wq768_0nFtjU5yIBlW3"}
-            ]),
-            'current_google_id_key': 'FULL'
-        }
-        try:
-            # Chuyển configparser object thành string
-            config_string = io.StringIO()
-            default_config.write(config_string)
-            original_data = config_string.getvalue().encode('utf-8')
-
-            encrypted_data = self.fernet.encrypt(original_data)
-            with open(filename, 'wb') as configfile:
-                configfile.write(encrypted_data)
-            self._log_during_init(f"✔ Đã tạo file config mặc định được mã hóa: {filename}\n")
-        except IOError as e:
-            self._log_during_init(f"✘ Lỗi khi tạo file config mặc định được mã hóa: {e}\n")
-
     def load_config(self):
         config_file = 'config.dat'
         if not os.path.exists(config_file):
@@ -301,129 +271,8 @@ class App(tk.Tk):
             else:
                 self._log_during_init("✘ Lỗi: Không thể giải mã config.dat hoặc file rỗng.\n")
                 raise Exception("Không thể giải mã config.dat")
-
-            # Tải danh sách Google IDs
-            google_ids_list_str = self.app_config.get('server', 'google_ids_list', fallback='[]')
-            try:
-                self.google_ids_list = json.loads(google_ids_list_str)
-                if not isinstance(self.google_ids_list, list): # Đảm bảo nó là list
-                    self.google_ids_list = []
-            except json.JSONDecodeError:
-                self.google_ids_list = []
-            
-            # Tải khóa Google ID hiện tại
-            self.current_google_id_key = self.app_config.get('server', 'current_google_id_key', fallback='Mặc định')
-
-            # Cập nhật self.google_id dựa trên current_google_id_key
-            self.update_google_id_from_list()
         except (configparser.Error, configparser.NoSectionError, Exception) as e:
             self._log_during_init(f"Cảnh báo: Lỗi đọc config.dat: {e}\n")
-
-    def download_source_temp(self, event=None):
-        if not self.is_logged_in:
-            self._log("Bạn cần đăng nhập để sử dụng chức năng này.\n")
-            return
-
-        # Kiểm tra xem có tác vụ nào đang chạy không
-        if self.active_thread and self.active_thread.is_alive():
-            # Nếu tác vụ đang chạy là download, thì hủy nó
-            if self.current_task_name == "download":
-                self._log("☛ Đang gửi yêu cầu hủy tải xuống...\n")
-                self.cancel_current_task = True
-            # Nếu là tác vụ khác, thì thông báo
-            else:
-                self._log(f"Một tác vụ khác ('{self.current_task_name}') đang chạy. Vui lòng đợi.\n")
-            return
-
-        # Nếu không có tác vụ nào chạy, bắt đầu tải xuống
-        if not self.google_id:
-            self._log("✘ Lỗi: Google ID không được cấu hình. Vui lòng cấu hình trong F6.", clear_first=True)
-            return
-
-        self.copy_button_var.set("↓")
-        self._log("Đang chuẩn bị tải xuống từ Google Drive...\n", clear_first=True)
-        
-        self.current_task_name = "download"
-        self.cancel_current_task = False
-        self._run_task_in_thread(self._execute_download)
-
-    def _execute_download(self):
-        self.download_active = True
-        save_dir = os.path.join(os.getcwd(), "source_temp")
-        source_dir = os.path.join(os.getcwd(), "source")
-
-        # Chuyển hướng cả stdout và stderr để bắt toàn bộ log của gdown
-        redirector = self._Redirector(self)
-        original_stdout = sys.stdout
-        original_stderr = sys.stderr
-        sys.stdout = redirector
-        sys.stderr = redirector
-
-        try:
-            self._log("Bắt đầu tải xuống từ Google Drive...\n", clear_first=True)
-            os.makedirs(save_dir, exist_ok=True)
-
-            gdown.download_folder(id=self.google_id, output=save_dir, quiet=False, use_cookies=False)
-
-            if self.cancel_current_task or self.is_closing:
-                self._log("\n✔ Tác vụ đã được yêu cầu hủy (hoặc ứng dụng đang đóng).\n")
-                return
-
-            self._log(f"\n✔ Đã tải xuống source_temp thành công vào: {save_dir}")
-
-            os.makedirs(source_dir, exist_ok=True)
-            seven_zip_files = [f for f in os.listdir(save_dir) if f.endswith(".7z")]
-            if seven_zip_files:
-                self._log("\nĐang giải nén các tệp .7z...")
-                for zip_file in seven_zip_files:
-                    zip_file_path = os.path.join(save_dir, zip_file)
-                    try:
-                        # Thử giải nén không mật khẩu
-                        with py7zr.SevenZipFile(zip_file_path, mode='r') as z:
-                            z.extractall(path=source_dir)
-                        self._log(f"\n✔ Đã giải nén {zip_file} thành công vào: {source_dir}")
-                        os.remove(zip_file_path)
-                    except py7zr.Bad7zFile as e: # Catch specific error for bad password/corrupt file
-                        self._log(f"\n⚠ Giải nén {zip_file} thất bại, thử với mật khẩu... ({e})")
-                        try:
-                            # Thử giải nén với mật khẩu
-                            with py7zr.SevenZipFile(zip_file_path, mode='r', password="357088003900671") as z:
-                                z.extractall(path=source_dir)
-                            self._log(f"\n✔ Đã giải nén {zip_file} thành công vào: {source_dir}")
-                            os.remove(zip_file_path)
-                        except Exception as extract_e_pw:
-                            self._log(f"\n✘ Lỗi khi giải nén {zip_file} (cả có và không mật khẩu): {extract_e_pw}")
-                    except Exception as extract_e: # Catch other general exceptions
-                        self._log(f"\n✘ Lỗi không xác định khi giải nén {zip_file}: {extract_e}")
-            else:
-                self._log("\nKhông tìm thấy tệp .7z nào để giải nén.")
-            
-            self.populate_checkboxes()
-            self._log("\n✔ Hoàn thành tải source. Chọn COPY để tiến hành copy dữ liệu.\n")
-
-        except Exception as e:
-            self._log(f"\n✘ Lỗi trong quá trình tải: {e}")
-        finally:
-            # Khôi phục lại stdout/stderr và các trạng thái khác
-            sys.stdout = original_stdout
-            sys.stderr = original_stderr
-            self.copy_button_var.set("COPY")
-            self.download_active = False
-            self.gdown_process = None
-            if os.path.exists(save_dir):
-                try:
-                    shutil.rmtree(save_dir)
-                except Exception as e:
-                    self._log(f"\n✘ Lỗi khi xóa thư mục tạm thời {save_dir}: {e}")
-
-    def _update_download_status(self):
-        base_message = "Đang tải source từ Google Drive"
-        dots = 0
-        while self.download_active:
-            current_message = base_message + "." * (dots + 1) # Changed to continuously increasing dots
-            self._log(current_message, clear_first=True)
-            dots += 1
-            time.sleep(3) # Changed to 3 seconds
 
     def _validate_and_log_settings(self):
         error_messages = []
@@ -486,7 +335,7 @@ class App(tk.Tk):
         
         self.select_all_var.set(self.setting_checked)
         if error_messages:
-            full_warning = "--- THÔNG BÁO CẤU HÌNH ---\n" + "\n".join(error_messages) + "\n-----------------------------\n\n"
+            full_warning = "--- THÔNG BÁO CẤU HÌNH ---" + "\n".join(error_messages) + "\n-----------------------------\n\n"
             self._log(full_warning)
 
     def create_top_bar(self):
@@ -568,7 +417,6 @@ class App(tk.Tk):
 
     def _lock_ui_for_login(self):
         self._set_ui_state('disabled')
-        # Giữ lại các thành phần đăng nhập
         self.login_button.config(state="normal")
         self.password_entry.config(state="normal")
 
@@ -609,79 +457,6 @@ class App(tk.Tk):
         else:
             self.checkbox_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
 
-    def _open_add_edit_gid_dialog(self, parent_window, mode, current_name=None, current_id=None):
-        dialog = tk.Toplevel(parent_window)
-        dialog.title("Thêm/Sửa Google ID")
-        dialog.transient(parent_window)
-        dialog.grab_set()
-        dialog.attributes("-topmost", True)
-
-        name_var = tk.StringVar(value=current_name if current_name else "")
-        id_var = tk.StringVar(value=current_id if current_id else "")
-
-        tk.Label(dialog, text="Tên (Key):").grid(row=0, column=0, padx=5, pady=5)
-        name_entry = tk.Entry(dialog, textvariable=name_var, width=40)
-        name_entry.grid(row=0, column=1, padx=5, pady=5)
-
-        tk.Label(dialog, text="Google ID (GID):").grid(row=1, column=0, padx=5, pady=5)
-        id_entry = tk.Entry(dialog, textvariable=id_var, width=40)
-        id_entry.grid(row=1, column=1, padx=5, pady=5)
-
-        def save_entry():
-            name = name_var.get().strip()
-            gid = id_var.get().strip()
-
-            if not name or not gid:
-                self._log("Tên và Google ID không được để trống.\n")
-                return
-
-            if mode == "add":
-                if any(entry['name'] == name for entry in self.google_ids_list):
-                    self._log(f"Tên '{name}' đã tồn tại. Vui lòng chọn tên khác.\n")
-                    return
-                self.google_ids_list.append({"name": name, "id": gid})
-            elif mode == "edit":
-                for i, entry in enumerate(self.google_ids_list):
-                    if entry['name'] == current_name:
-                        self.google_ids_list[i] = {"name": name, "id": gid}
-                        break
-            
-            self.google_id_combobox['values'] = [entry['name'] for entry in self.google_ids_list]
-            self.google_id_combobox.set(name) # Đặt giá trị hiện tại là mục vừa thêm/sửa
-            self.current_google_id_key = name # Cập nhật khóa hiện tại
-            self.update_google_id_from_list() # Cập nhật self.google_id
-            dialog.destroy()
-
-        tk.Button(dialog, text="Lưu", command=save_entry).grid(row=2, column=0, padx=5, pady=5)
-        tk.Button(dialog, text="Hủy", command=dialog.destroy).grid(row=2, column=1, padx=5, pady=5)
-
-        dialog.update_idletasks()
-        x = parent_window.winfo_x() + (parent_window.winfo_width() // 2) - (dialog.winfo_width() // 2)
-        y = parent_window.winfo_y() + (parent_window.winfo_height() // 2) - (dialog.winfo_height() // 2)
-        dialog.geometry(f"{x}+{y}")
-
-    def _delete_gid(self, parent_window):
-        selected_name = self.google_id_combobox.get()
-        if not selected_name:
-            self._log("Vui lòng chọn một Google ID để xóa.\n")
-            return
-        
-        if tk.messagebox.askyesno("Xác nhận xóa", f"Bạn có chắc chắn muốn xóa Google ID '{selected_name}' không?", parent=parent_window):
-            self.google_ids_list = [entry for entry in self.google_ids_list if entry['name'] != selected_name]
-            self.google_id_combobox['values'] = [entry['name'] for entry in self.google_ids_list]
-            
-            if self.google_ids_list:
-                self.google_id_combobox.set(self.google_ids_list[0]['name'])
-                self.current_google_id_key = self.google_ids_list[0]['name']
-            else:
-                self.google_id_combobox.set("")
-                self.current_google_id_key = ""
-            
-            self.update_google_id_from_list() # Cập nhật self.google_id
-            self._log(f"Đã xóa Google ID '{selected_name}'.\n")
-            # Cần gọi lại _save_mini_form_config để lưu thay đổi vào config.dat
-            # Tạm thời, người dùng sẽ phải nhấn nút Lưu chính để lưu
-
     def _save_mini_form_config(self, mini_form_window):
         config_content = self._decrypt_config('config.dat')
         full_config = configparser.ConfigParser()
@@ -692,20 +467,12 @@ class App(tk.Tk):
             if not full_config.has_section(section):
                 full_config.add_section(section)
 
-            if key == 'current_google_id_key': # Xử lý riêng cho combobox
-                value_to_save = var.get()
-                full_config.set(section, key, value_to_save)
-            elif isinstance(var, tk.BooleanVar):
+            if isinstance(var, tk.BooleanVar):
                 value_to_save = str(var.get()).lower()
                 full_config.set(section, key, value_to_save)
             else:
                 value_to_save = var.get()
                 full_config.set(section, key, value_to_save)
-
-        # Lưu danh sách google_ids_list
-        if not full_config.has_section('server'):
-            full_config.add_section('server')
-        full_config.set('server', 'google_ids_list', json.dumps(self.google_ids_list))
 
         try:
             config_string = io.StringIO()
@@ -718,6 +485,7 @@ class App(tk.Tk):
             
             self._log(f"✔ Đã lưu cấu hình vào config.dat thành công.\n")
             self.load_config()
+            self._validate_and_log_settings() # Đồng bộ các giá trị setting mới vào biến của lớp
             mini_form_window.destroy()
             self.mini_form_instance = None
 
@@ -748,18 +516,15 @@ class App(tk.Tk):
                 mini_config.read_string(config_content)
                 row_idx = 0
 
-                # Hiển thị các mục trong [Settings]
                 if mini_config.has_section('Settings'):
                     for key, value in mini_config.items('Settings'):
                         tk.Label(mini_form, text=f"{key.capitalize()}:", font=("Arial", 10)).grid(row=row_idx, column=0, sticky="w", padx=10, pady=2)
                         
                         if key.lower() == 'checked':
-                            # Tạo Checkbutton cho cài đặt 'checked'
                             bool_var = tk.BooleanVar(value=mini_config.getboolean('Settings', key))
                             widget = tk.Checkbutton(mini_form, variable=bool_var, anchor="w")
                             self.mini_form_vars[('Settings', key)] = bool_var
                         else:
-                            # Tạo Entry cho các cài đặt khác
                             str_var = tk.StringVar(value=value)
                             widget = tk.Entry(mini_form, textvariable=str_var, state="normal", width=50)
                             self.mini_form_vars[('Settings', key)] = str_var
@@ -767,36 +532,8 @@ class App(tk.Tk):
                         widget.grid(row=row_idx, column=1, sticky="ew", padx=5, pady=2)
                         row_idx += 1
 
-                # Hiển thị Combobox cho Google ID
-                tk.Label(mini_form, text="Google ID:", font=("Arial", 10)).grid(row=row_idx, column=0, sticky="w", padx=10, pady=2)
-                
-                self.google_id_combobox_var = tk.StringVar()
-                self.google_id_combobox = ttk.Combobox(mini_form, textvariable=self.google_id_combobox_var, state="readonly", width=47)
-                self.google_id_combobox.grid(row=row_idx, column=1, sticky="ew", padx=5, pady=2)
-                self.google_id_combobox['values'] = [entry['name'] for entry in self.google_ids_list]
-                
-                # Đặt giá trị hiện tại cho combobox
-                if self.current_google_id_key in self.google_id_combobox['values']:
-                    self.google_id_combobox.set(self.current_google_id_key)
-                elif self.google_ids_list:
-                    self.google_id_combobox.set(self.google_ids_list[0]['name'])
-                else:
-                    self.google_id_combobox.set("")
-
-                self.mini_form_vars[('server', 'current_google_id_key')] = self.google_id_combobox_var # Lưu biến combobox để lưu lại
-                row_idx += 1
-
-                # Các nút quản lý Google ID
-                gid_buttons_frame = tk.Frame(mini_form)
-                gid_buttons_frame.grid(row=row_idx, column=1, sticky="ew", padx=5, pady=2)
-                tk.Button(gid_buttons_frame, text="Thêm mới", command=lambda: self._open_add_edit_gid_dialog(mini_form, "add")).pack(side="left", padx=2)
-                tk.Button(gid_buttons_frame, text="Sửa", command=lambda: self._open_add_edit_gid_dialog(mini_form, "edit")).pack(side="left", padx=2)
-                tk.Button(gid_buttons_frame, text="Xóa", command=lambda: self._delete_gid(mini_form)).pack(side="left", padx=2)
-                row_idx += 1
-
                 mini_form.grid_columnconfigure(1, weight=1)
 
-                # Nút Lưu và Hủy
                 button_frame = tk.Frame(mini_form)
                 button_frame.grid(row=row_idx, column=0, columnspan=2, pady=10)
                 save_button = tk.Button(button_frame, text="Lưu", command=lambda: self._save_mini_form_config(mini_form))
@@ -822,8 +559,6 @@ class App(tk.Tk):
         center_x = main_x + (main_width // 2) - (mini_form_width // 2)
         center_y = main_y + (main_height // 2) - (mini_form_height // 2)
         mini_form.geometry(f"+{center_x}+{center_y}")
-
-    
 
     def get_html_title(self, project_path, fallback_name):
         html_file = os.path.join(project_path, 'index.html')
@@ -858,7 +593,7 @@ class App(tk.Tk):
             cb.bind("<Button-4>", self._on_mousewheel_checkbox)
             cb.bind("<Button-5>", self._on_mousewheel_checkbox)
 
-        self.select_all_var.set(initial_check_state);
+        self.select_all_var.set(initial_check_state); 
         if item_list:
             self._update_select_all_state()
 
@@ -920,18 +655,30 @@ class App(tk.Tk):
 
         log_file_path = os.path.join(app_data_path, 'pattern.log')
         log_data = []
+
+        # Bước 1: Đọc, giải mã và parse log hiện có (nếu có)
         try:
             if os.path.exists(log_file_path):
-                with open(log_file_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    if content: log_data = json.loads(content)
-                    if not isinstance(log_data, list): log_data = []
-        except (json.JSONDecodeError, IOError): log_data = []
+                with open(log_file_path, 'rb') as f:
+                    encrypted_content = f.read()
+                
+                if encrypted_content:
+                    decrypted_content = self.fernet.decrypt(encrypted_content)
+                    log_data = json.loads(decrypted_content.decode('utf-8'))
+                    if not isinstance(log_data, list):
+                        log_data = [] # Đảm bảo log_data luôn là một list
+        except Exception as e:
+            self._log(f"\nCảnh báo: Không thể đọc hoặc phân tích pattern.log cũ. Sẽ tạo file log mới. Lỗi: {e}\n")
+            log_data = [] # Bắt đầu lại với list rỗng nếu có lỗi
 
+        # Bước 2: Thêm mục log mới
         new_entry = {"timestamp": datetime.now().isoformat(), "source": source_folder, "created_folder": encrypted_folder_name}
         log_data.append(new_entry)
+
+        # Bước 3: Mã hóa và ghi lại toàn bộ dữ liệu log đã cập nhật
         try:
-            encrypted_data = self.fernet.encrypt(json.dumps(log_data, indent=4, ensure_ascii=False).encode('utf-8'))
+            updated_json_string = json.dumps(log_data, indent=4, ensure_ascii=False).encode('utf-8')
+            encrypted_data = self.fernet.encrypt(updated_json_string)
             with open(log_file_path, 'wb') as f:
                 f.write(encrypted_data)
         except IOError as e:
@@ -942,7 +689,6 @@ class App(tk.Tk):
         if required_random_len < 0:
             return pattern[:length]
         
-        # Loại bỏ ký tự đặc biệt nguy hiểm cho Windows folder
         safe_alphabet = (
             string.ascii_letters +  # a-zA-Z
             string.digits +         # 0-9
@@ -1000,7 +746,6 @@ class App(tk.Tk):
             self._log("Lỗi: Thư mục gốc không tồn tại để áp dụng bảo mật.\n")
             return
 
-        # Bảo mật: tạo thư mục rác ngẫu nhiên
         self._log("\n☛ Đang xử lý bảo mật...\n")
         try:
             # emojis = ['🐔', '🐓', '🐤', '🐣', '🐥']
@@ -1020,7 +765,6 @@ class App(tk.Tk):
         except Exception as e:
             self._log(f"✘ Lỗi trong bảo mật: {e}\n")
 
-        # Ẩn dữ liệu
         self._log("☛ Đang xử lý dữ liệu...\n")
         try:
             count = 0
@@ -1344,7 +1088,7 @@ class App(tk.Tk):
         # --------------------------
 
         self._clear_shortcut_task(log_to_gui=False)
-        self._log("\n✔  Đã hoàn tất dọn dẹp các shortcut trên Desktop.")
+        self._log("✔  Đã hoàn tất dọn dẹp các shortcut trên Desktop.")
         
         app_data_path = self.output_base_dir
         if not app_data_path:
@@ -1381,9 +1125,7 @@ class App(tk.Tk):
         if num_sources_found == 0:
             self._log("\n⚠  File log rỗng hoặc không có mục hợp lệ.")
         else:
-            self._log(f"""
-✔  Tìm thấy [{num_sources_found}] source cần dọn dẹp.
-""")
+            self._log(f"\n✔  Tìm thấy [{num_sources_found}] source cần dọn dẹp.\n")
             deleted_count = 0
             for path in folders_to_delete:
                 if os.path.isdir(path):
@@ -1399,40 +1141,39 @@ class App(tk.Tk):
 
         try:
             os.remove(log_file_path)
-            self._log("\n✔  Đã xóa file log.")
+            self._log("✔  Đã xóa file log.")
         except OSError as e:
-            self._log(f"\n✘  Lỗi khi xóa file pattern.log: {e}")
+            self._log(f"✘  Lỗi khi xóa file pattern.log: {e}")
+
+        # --- BƯỚC DỌN DẸP BỔ SUNG ---
+        self._log("\n☛  Bắt đầu quét và dọn dẹp các thư mục rác còn sót lại...\n")
+        found_orphans = 0
+        try:
+            if os.path.exists(app_data_path):
+                for dirname in os.listdir(app_data_path):
+                    # An toàn hơn: kiểm tra cả tiền tố, hậu tố và pattern
+                    if dirname.startswith('{') and dirname.endswith('}') and self.setting_pattern in dirname:
+                        dir_path = os.path.join(app_data_path, dirname)
+                        if os.path.isdir(dir_path):
+                            self._log(f"☛  Phát hiện thư mục rác: {dirname}. Đang xóa...\n")
+                            try:
+                                shutil.rmtree(dir_path)
+                                self._log(f"✔  Đã xóa {dirname}.\n")
+                                found_orphans += 1
+                            except OSError as e:
+                                self._log(f"✘  Lỗi khi xóa {dirname}: {e}\n")
+            if found_orphans > 0:
+                self._log(f"✔  Hoàn tất dọn dẹp {found_orphans} thư mục rác.\n")
+            else:
+                self._log("✔  Không tìm thấy thư mục rác nào.\n")
+        except Exception as e:
+            self._log(f"✘  Lỗi trong quá trình quét dọn rác: {e}\n")
+        # --- KẾT THÚC BƯỚC DỌN DẸP BỔ SUNG ---
             
         self._log(f"\n\n✬ ✮ ✭ ✯    QUÁ TRÌNH DỌN DẸP HOÀN TẤT ✬ ✮ ✭ ✯  ")
 
-    def download_google_drive_folder(self, event=None):
-        # Chạy tác vụ trong một luồng riêng để không làm đơ UI
-        self._run_task_in_thread(self._download_google_drive_folder_task)
-
-    def _download_google_drive_folder_task(self):
-        self._log("", clear_first=True)
-        self._log("☛ Đang tải thư mục từ Google Drive...", clear_first=True)
-        try:
-            folder_id = self.google_id
-            if not folder_id:
-                self._log("✘ Lỗi: Google ID không được cấu hình. Vui lòng cấu hình trong F6.", clear_first=True)
-                return
-
-            save_dir = os.path.join(os.getcwd(), "source_temp")
-            os.makedirs(save_dir, exist_ok=True)
-            
-            folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
-            
-            self._log(f"Đang tải xuống từ: {folder_url} vào {save_dir}", clear_first=True)
-            gdown.download_folder(url=folder_url, output=save_dir, quiet=False, use_cookies=False)
-            
-            self._log("✔ Tải xuống hoàn tất!", clear_first=True)
-        except Exception as e:
-            self._log(f"✘ Lỗi khi tải xuống từ Google Drive: {e}", clear_first=True)
-
 # --- ĐIỂM BẮT ĐẦU CHẠY CHƯƠNG TRÌNH ---
 if __name__ == "__main__":
-    # Add dummy CSIDL constants for non-Windows systems to avoid NameError
     if system() != "Windows":
         class DummyShellcon:
             CSIDL_DESKTOP = 16
